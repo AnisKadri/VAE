@@ -68,15 +68,15 @@ class shortEncoder(nn.Module):
         
         ### Linear section: mean
         self.encoder_mu = nn.Sequential(
-            nn.Linear(self.n * n_channels*8, 100),
+            nn.Linear(self.n * n_channels*8, 32*latent_dims),
             nn.ReLU(True),
-            nn.Linear(100, latent_dims)
+            nn.Linear(32*latent_dims, latent_dims)
         )
         
         self.encoder_var_log = nn.Sequential(
-            nn.Linear(self.n * n_channels*8, 100),
+            nn.Linear(self.n * n_channels*8, 32*latent_dims),
             nn.ReLU(True),
-            nn.Linear(100, latent_dims)
+            nn.Linear(32*latent_dims, latent_dims)
         )
          
 
@@ -113,15 +113,15 @@ class longEncoder(nn.Module):
         self.n = lin_size(L, [15,2,2])
         ### Linear section: mean
         self.encoder_mu = nn.Sequential(
-            nn.Linear(self.n * n_channels*8, 100),
+            nn.Linear(self.n * n_channels*8, 32*latent_dims),
             nn.ReLU(True),
-            nn.Linear(100, latent_dims)
+            nn.Linear(32*latent_dims, latent_dims)
         )
         
         self.encoder_var_log = nn.Sequential(
-            nn.Linear(self.n * n_channels*8, 100),
+            nn.Linear(self.n * n_channels*8, 32*latent_dims),
             nn.ReLU(True),
-            nn.Linear(100, latent_dims)
+            nn.Linear(32*latent_dims, latent_dims)
         )
          
 
@@ -142,9 +142,13 @@ class Decoder(nn.Module):
         
          ### Linear section
         self.dec_lin = nn.Sequential(
-            nn.Linear(2*latent_dims, 100),
+            nn.Linear(2*latent_dims, 8*latent_dims),
             nn.ReLU(True),
-            nn.Linear(100, n_channels)
+            nn.Linear(8*latent_dims, 16*latent_dims),
+            nn.ReLU(True),
+            nn.Linear(16*latent_dims, 32*latent_dims),
+            nn.ReLU(True),
+            nn.Linear(32*latent_dims, n_channels),
         )      
 
     def forward(self, x):

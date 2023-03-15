@@ -75,7 +75,7 @@ def test(model, test_loader, criterion, device):
     with torch.no_grad():
         for data in test_loader:
             data = data.to(device)
-            recon_batch, mu, logvar = model(data)
+            x_rec, mu, logvar = model(data)
             
             ### sum up batch loss
             loss = criterion(x_rec, data[:,:,0], mu, logvar)
