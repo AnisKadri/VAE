@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import torch
+# import torch
 np.random.seed(10)
 
 class Gen():
@@ -11,7 +11,7 @@ class Gen():
         self.nchannels = nchannels
         self.val = val
         self.mu = np.random.randint(val, size=nchannels)
-        self.cov = np.diag(np.random.uniform(5, size=nchannels))
+        self.cov = np.diag(np.random.uniform(high=1, size=nchannels))
         self.effects_params = {
             "Pulse":{
                 "channel":[],
@@ -114,7 +114,7 @@ class Gen():
         channels_nodup = list(dict.fromkeys(channels))
         values = np.random.randint(self.t[-1], size=n)
         idxs = (values*self.step**-1).astype(int)        
-        slopes = np.random.randint(low = -slope, high = slope, size=n)  
+        slopes = np.random.uniform(low = -slope, high = slope, size=n)  
         
         #save the Trends parameters
         self.effects_params["Trend"]["channel"].extend(channels)
@@ -138,6 +138,7 @@ class Gen():
         n = params["number"]
         freq = params["frequency_range"]
         amp = params["amplitude_range"]
+#         w = 1/self.t[-1]
         
         ### create randomised Seasonalities parameters
         # channels: On which channel will the effect be applied.
@@ -145,7 +146,7 @@ class Gen():
         # amps: Amplitude of each seasonality. 
         # phases: Phase of each seasonality
         channels = np.random.randint(self.nchannels, size=n)
-        freqs = np.random.randint(low = freq[0], high = freq[1], size=n)
+        freqs = np.random.uniform(low = freq[0], high = freq[1], size=n)
         amps = np.random.randint(low = amp[0], high = amp[1], size=n)
         phases = np.random.randint(180, size=n)
 
