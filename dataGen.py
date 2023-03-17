@@ -10,8 +10,16 @@ class Gen():
         self.effects = effects
         self.nchannels = nchannels
         self.val = val
-        self.mu = np.random.randint(val, size=nchannels)
-        self.cov = np.diag(np.random.uniform(high=1, size=nchannels))
+        
+        # generate the time axis
+        self.t = np.arange(time, step = self.step)        
+        self.n = self.t.shape[0]
+        
+        # generate y values
+        self.mu = np.random.randint(self.val, size=nchannels)
+        self.mu = np.tile(self.mu, (self.n,1)).T.astype(np.float32)
+        self.cov = np.diag(np.ones(self.n))
+#         self.cov = np.diag(np.random.uniform(high=1, size=nchannels))
         self.effects_params = {
             "Pulse":{
                 "channel":[],
@@ -31,15 +39,11 @@ class Gen():
             }            
         } 
         
-        # generate the time axis
-        self.t = np.arange(time, step = self.step)        
-        l = self.t.shape[0]
+        # add effects (noise)
+        self.add_effects(self.effects) 
         
         # generate the different timeseries: multivariate normal dist
-        self.x = np.random.multivariate_normal(self.mu, self.cov, l).T
-
-        # add effects (noise)
-        self.add_effects(self.effects)            
+        self. x = np.array([np.random.multivariate_normal(self.mu[:,obs], np.diag(np.ones_like(self.mu[:,obs]))) for obs in range(self.n)]).T            
     
     #plots the generated data
     def show(self):        
@@ -93,11 +97,11 @@ class Gen():
         self.effects_params["Pulse"]["scale"].extend(scale)
         
         # generate the pulses
-        ground_val = self.x[channels, idxs]
+        ground_val = self.mu[channels, idxs]
         k = np.random.uniform(ground_val, ground_val*scale)
 
         # add it to the channels
-        self.x[channels,idxs] += k
+        self.mu[channels,idxs] += k
         
     
     def add_trend(self, params):
@@ -122,7 +126,7 @@ class Gen():
         self.effects_params["Trend"]["slope"].extend(slopes)
         
         # generate the trends
-        trends = np.zeros_like(self.x)
+        trends = np.zeros_like(self.mu)
         for channel, idx in enumerate(idxs):
             shifted = len(self.t) - idx
             ch = channels[channel]
@@ -130,7 +134,7 @@ class Gen():
             trends[ch, idx :] += np.linspace(0,  slopes[channel]* self.step*shifted, shifted)
 
         # add it to the channels
-        self.x += trends
+        self.mu += trends
         
     def add_seasonality(self,params):
         # extract and generate the parameters:
@@ -158,9 +162,9 @@ class Gen():
         
         # generate the seasonalites
         g2r =  np.pi/180
-        seas = np.zeros_like(self.x)
+        seas = np.zeros_like(self.mu)
         for idx, channel in enumerate(channels):
             seas[channel] = np.maximum(seas[channel], np.sin(self.t*freqs[idx] * g2r + phases[idx] * g2r)* amps[idx])
         
          # add it to the channels
-        self.x += seas
+        self.mu += seas
