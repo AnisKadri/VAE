@@ -1,10 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
+import matplotlib.dates as mdates
 # import torch
 np.random.seed(10)
 
 class Gen():
-    def __init__(self, time= 100, step = 0.2, val = 1000, nchannels = 3, effects = None):              
+    def __init__(self, periode = 30, step = 5, val = 1000, nchannels = 3, effects = None):              
         # get the parameters
         self.step = step
         self.effects = effects
@@ -12,7 +14,9 @@ class Gen():
         self.val = val
         
         # generate the time axis
-        self.t = np.arange(time, step = self.step)        
+        min_per_day = 1440
+        self.periode = periode * min_per_day # convert in minutes
+        self.t = np.arange(self.periode, step = self.step)        
         self.n = self.t.shape[0]
         
         # generate y values
@@ -46,9 +50,10 @@ class Gen():
         self. x = np.array([np.random.multivariate_normal(self.mu[:,obs], np.diag(np.ones_like(self.mu[:,obs]))) for obs in range(self.n)]).T            
     
     #plots the generated data
-    def show(self):        
-        plt.plot(self.t, self.x.T)
-        plt.grid(True)
+    def show(self): 
+        self.plot_time_series(self.t, self.x.T, "Generated MTS")
+#         plt.plot(self.t, self.x.T)
+#         plt.grid(True)
         
     #returns the Time series and their parameters
     def parameters(self):        
@@ -164,7 +169,42 @@ class Gen():
         g2r =  np.pi/180
         seas = np.zeros_like(self.mu)
         for idx, channel in enumerate(channels):
-            seas[channel] = np.maximum(seas[channel], np.sin(self.t*freqs[idx] * g2r + phases[idx] * g2r)* amps[idx])
+            seas[channel] = np.maximum(seas[channel], np.sin(2 * np.pi * self.t * freqs[idx] / (24 * 60 * 7) + phases[idx])* amps[idx])
         
          # add it to the channels
         self.mu += seas
+        
+    def plot_time_series(self, x, y, title):
+        """
+        Plots a time series with dates on the x-axis using matplotlib.
+
+        Args:
+        x (list): List of datetime objects representing the x-axis.
+        y (list): List of values representing the y-axis.
+        title (str): The title of the plot.
+
+        Returns:
+        None
+        """        
+        reference_time = np.datetime64('2023-03-01T00:00:00')
+        date_array = reference_time + np.array(x, dtype='timedelta64[m]')
+    
+        duration = np.max(date_array) - np.min(date_array)
+        one_month = np.timedelta64(1, 'M').astype('timedelta64[m]')
+        
+        formater = mdates.DateFormatter('%A')
+        locator = mdates.DayLocator()
+        if duration > one_month/2 and duration <= 2 * one_month:
+            locator = mdates.DayLocator(interval=2)
+        elif duration > 2 * one_month:
+            locator = mdates.WeekdayLocator()
+            formater = mdates.DateFormatter('%Y-%m-%d')
+        
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.plot(date_array, y)
+        ax.set(xlabel='Date', ylabel='Value', title=title)
+        ax.xaxis.set_major_formatter(formater)
+        ax.xaxis.set_major_locator(locator)
+        plt.xticks(rotation=45)
+        plt.grid(True)
+        plt.show()
