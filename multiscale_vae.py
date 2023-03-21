@@ -68,15 +68,17 @@ class shortEncoder(nn.Module):
         
         ### Linear section: mean
         self.encoder_mu = nn.Sequential(
-            nn.Linear(self.n * n_channels*8, 32*latent_dims),
-            nn.ReLU(True),
-            nn.Linear(32*latent_dims, latent_dims)
+            nn.Linear(self.n * n_channels*8, latent_dims)
+#             nn.Linear(self.n * n_channels*8, 32*latent_dims),
+#             nn.ReLU(True),
+#             nn.Linear(32*latent_dims, latent_dims)
         )
         
         self.encoder_var_log = nn.Sequential(
-            nn.Linear(self.n * n_channels*8, 32*latent_dims),
-            nn.ReLU(True),
-            nn.Linear(32*latent_dims, latent_dims)
+            nn.Linear(self.n * n_channels*8, latent_dims)
+#             nn.Linear(self.n * n_channels*8, 32*latent_dims),
+#             nn.ReLU(True),
+#             nn.Linear(32*latent_dims, latent_dims)
         )
          
 
@@ -113,15 +115,17 @@ class longEncoder(nn.Module):
         self.n = lin_size(L, [15,2,2])
         ### Linear section: mean
         self.encoder_mu = nn.Sequential(
-            nn.Linear(self.n * n_channels*8, 32*latent_dims),
-            nn.ReLU(True),
-            nn.Linear(32*latent_dims, latent_dims)
+            nn.Linear(self.n * n_channels*8, latent_dims)
+#             nn.Linear(self.n * n_channels*8, 32*latent_dims),
+#             nn.ReLU(True),
+#             nn.Linear(32*latent_dims, latent_dims)
         )
         
         self.encoder_var_log = nn.Sequential(
-            nn.Linear(self.n * n_channels*8, 32*latent_dims),
-            nn.ReLU(True),
-            nn.Linear(32*latent_dims, latent_dims)
+            nn.Linear(self.n * n_channels*8, latent_dims)
+#             nn.Linear(self.n * n_channels*8, 32*latent_dims),
+#             nn.ReLU(True),
+#             nn.Linear(32*latent_dims, latent_dims)
         )
          
 
@@ -137,7 +141,7 @@ class longEncoder(nn.Module):
         return mu, var_log
     
 class Decoder(nn.Module):
-    def __init__(self, n_channels, latent_dims):
+    def __init__(self, n_channels, L, latent_dims):
         super(Decoder, self).__init__()        
         
          ### Linear section
@@ -150,10 +154,12 @@ class Decoder(nn.Module):
 #             nn.ReLU(True),
 #             nn.Linear(32*latent_dims, n_channels),
 #         )  
-        
+        self.n = lin_size(L, [2,2,2])
         self.dec_lin = nn.Sequential(
-            nn.Linear(2*latent_dims, 8*n_channels),
-            nn.ReLU(True),
+            nn.Linear(2*latent_dims, n_channels*8)
+#             nn.Linear(2*latent_dims, 32*latent_dims),
+#             nn.ReLU(True),
+#             nn.Linear(32*latent_dims, n_channels*8)
 #             nn.Linear(8*latent_dims, 16*latent_dims),
 #             nn.ReLU(True),
 #             nn.Linear(16*latent_dims, 32*latent_dims),
@@ -195,7 +201,7 @@ class vae(nn.Module):
         
         self.sencoder = shortEncoder(n_channels, L, latent_dims)
         self.lencoder = longEncoder(n_channels, L, latent_dims)
-        self.decoder = Decoder(n_channels, latent_dims)
+        self.decoder = Decoder(n_channels, L, latent_dims)
         
     def reparametrization_trick(self, mu, logvar):
         std = torch.exp(0.5*logvar)
@@ -212,74 +218,3 @@ class vae(nn.Module):
         z = self.reparametrization_trick(mu, logvar)
        
         return self.decoder(z), mu, logvar   
-
-
-# In[243]:
-
-
-### Cost function
-def criterion(recon_x, x, mu, logvar):
-    ### reconstruction loss
-    recon_loss = F.mse_loss(recon_x, x, reduction='sum')
-#     recon_loss = nn.MSELoss(recon_x, x, reduction='sum')
-
-    ### KL divergence loss
-    kld_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    
-    ### total loss
-    loss = recon_loss + kld_loss
-    return loss
-
-### Train function
-def train(v, train_loader, criterion, optimizer, device, epoch):
-    v.train()
-    train_loss = 0
-#     rec_bach = torch.tensor([])
-#     for i in range(0, params["T"]-L):
-    for batch_idx, data in enumerate(train_loader):
-#         W = torch.tensor(serie.T[i:i+L]).float()
-        
-        data = data.to(device)
-        optimizer.zero_grad()
-        x_rec, mu, logvar = v(data)
-#         rec_bach = torch.cat((rec_bach, x_rec), 0)
-#     print(serie.T[:params["T"]-L].shape)
-#     loss = criterion(rec_bach, serie.T[:params["T"]-L].squeeze(), mu, logvar)
-        
-#         recon_batch, mu, logvar = vae(W)
-#         print(x_rec.shape)
-#         print(data.shape)
-        loss = criterion(x_rec, data, mu, logvar)
-        loss.backward()
-
-        optimizer.step()
-        train_loss += loss.item()
-        if batch_idx % 100 == 0:
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                epoch, batch_idx * len(data), len(train_loader.dataset),
-                100. * batch_idx / len(train_loader), loss.item() / len(data)))
-    print('====> Epoch: {} Average loss: {:.4f}'.format(epoch, train_loss / len(train_loader.dataset)))
-
-### Test Function
-def test(vae, test_loader, criterion, device):
-    vae.eval()
-    test_loss= 0
-    with torch.no_grad():
-        for data in test_loader:
-            data = data.to(device)
-            recon_batch, mu, logvar = vae(data)
-            
-            ### sum up batch loss
-            loss = criterion(recon_batch, data, mu, logvar)
-            test_loss += loss.item()
-        
-    test_loss /= len(test_loader.dataset)
-    print('====> Test set loss: {:.4f}'.format(test_loss))
-
-
-
-
-
-
-
-

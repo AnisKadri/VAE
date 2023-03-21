@@ -43,7 +43,7 @@ def criterion(recon_x, x, mu, logvar):
     kld_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     
     ### total loss
-    loss = recon_loss + 1.5*kld_loss
+    loss = recon_loss + kld_loss
     return loss
 
 ### Train function
