@@ -74,7 +74,7 @@ class Gen():
     
     #plots the generated data
     def show(self): 
-        self.plot_time_series(self.t, self.x.T, "Generated MTS")
+        self.plot_time_series("Generated MTS")
         
         
     #returns the Time series and their parameters
@@ -314,20 +314,9 @@ class Gen():
                 self.x += noises
         
         
-    def plot_time_series(self, x, y, title):
-        """
-        Plots a time series with dates on the x-axis using matplotlib.
-
-        Args:
-        x (list): List of datetime objects representing the x-axis.
-        y (list): List of values representing the y-axis.
-        title (str): The title of the plot.
-
-        Returns:
-        None
-        """        
+    def plot_time_series(self, title): 
         
-        date_array = self.reference_time + np.array(x, dtype='timedelta64[m]')
+        date_array = self.reference_time + np.array(self.t, dtype='timedelta64[m]')
     
         duration = np.max(date_array) - np.min(date_array)
         one_month = np.timedelta64(1, 'M').astype('timedelta64[m]')
@@ -341,10 +330,12 @@ class Gen():
             formater = mdates.DateFormatter('%Y-%m-%d')
         
         fig, ax = plt.subplots(figsize=(10, 5))
-        ax.plot(date_array, y)
+        ax.plot(date_array, self.x.T)
         ax.set(xlabel='Date', ylabel='Value', title=title)
+        
         ax.xaxis.set_major_formatter(formater)
         ax.xaxis.set_major_locator(locator)
+        
         plt.xticks(rotation=45)
         plt.grid(True)
         plt.show()
