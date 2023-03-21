@@ -95,7 +95,7 @@ class longEncoder(nn.Module):
     def __init__(self, n_channels, L, latent_dims):
         super(longEncoder, self).__init__()      
                                 
-         ### Convolutional section
+        ### Convolutional section
         self.encoder_cnn = nn.Sequential(
             nn.Conv1d(n_channels, n_channels*2, kernel_size=15, stride=2, padding=0),
             nn.ReLU(True),
@@ -141,20 +141,49 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()        
         
          ### Linear section
+#         self.dec_lin = nn.Sequential(
+#             nn.Linear(2*latent_dims, 8*latent_dims),
+#             nn.ReLU(True),
+#             nn.Linear(8*latent_dims, 16*latent_dims),
+#             nn.ReLU(True),
+#             nn.Linear(16*latent_dims, 32*latent_dims),
+#             nn.ReLU(True),
+#             nn.Linear(32*latent_dims, n_channels),
+#         )  
+        
         self.dec_lin = nn.Sequential(
-            nn.Linear(2*latent_dims, 8*latent_dims),
+            nn.Linear(2*latent_dims, 8*n_channels),
             nn.ReLU(True),
-            nn.Linear(8*latent_dims, 16*latent_dims),
+#             nn.Linear(8*latent_dims, 16*latent_dims),
+#             nn.ReLU(True),
+#             nn.Linear(16*latent_dims, 32*latent_dims),
+#             nn.ReLU(True),
+#             nn.Linear(32*latent_dims, n_channels),
+        )  
+        
+        ### Convolutional section
+        self.dec_cnn = nn.Sequential(
+            nn.ConvTranspose1d(n_channels*8, n_channels*4, kernel_size=2, stride=2, padding=0),
             nn.ReLU(True),
-            nn.Linear(16*latent_dims, 32*latent_dims),
+            nn.BatchNorm1d(n_channels*4),
+            
+            nn.ConvTranspose1d(n_channels*4, n_channels*2, kernel_size=2, stride=2, padding=0),
             nn.ReLU(True),
-            nn.Linear(32*latent_dims, n_channels),
-        )      
+            nn.BatchNorm1d(n_channels*2),   
+            
+            nn.ConvTranspose1d(n_channels*2, n_channels, kernel_size=2, stride=2, padding=0),
+            nn.ReLU(True),
+
+        )
 
     def forward(self, x):
         ### CNN
+#         print(x.shape)
         x = self.dec_lin(x)  
-        return x     
+#         print(x.shape)
+        x = self.dec_cnn(x.view(x.shape[0],x.shape[1],1))
+#         print(x.shape)
+        return x[:,:,0]     
 
 
 # In[177]:
@@ -220,7 +249,7 @@ def train(v, train_loader, criterion, optimizer, device, epoch):
 #         recon_batch, mu, logvar = vae(W)
 #         print(x_rec.shape)
 #         print(data.shape)
-        loss = criterion(x_rec, data[:,:,0], mu, logvar)
+        loss = criterion(x_rec, data, mu, logvar)
         loss.backward()
 
         optimizer.step()
