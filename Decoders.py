@@ -47,10 +47,10 @@ class TCVAE_Decoder(nn.Module):
             if i == 1:
                 if first_kernel == None: first_kernel = 2
                 self.cnn_layers.append(nn.ConvTranspose1d(input_size * 2, input_size, kernel_size=2, stride=2, padding=0))
-                self.cnn_layers.append(nn.ReLU(True))
+                self.cnn_layers.append(nn.LeakyReLU(0.2, True))
             else:                
                 self.cnn_layers.append(nn.ConvTranspose1d(input_size * 2 * i, input_size * 2 * (i-1), kernel_size=2, stride=2, padding=0))
-                self.cnn_layers.append(nn.ReLU(True))
+                self.cnn_layers.append(nn.LeakyReLU(0.2, True))
                 self.cnn_layers.append(nn.BatchNorm1d(input_size * 2 * (i-1)))
                 
         
