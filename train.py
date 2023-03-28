@@ -56,6 +56,8 @@ def train(model, train_loader, criterion, optimizer, device, epoch):
         data = data.to(device)
         optimizer.zero_grad()
         x_rec, mu, logvar = model(data)
+#         print(x_rec.shape)
+#         print(data[:,:,0])
 
         loss = criterion(x_rec, data[:,:,0], mu, logvar)
         loss.backward()
@@ -83,3 +85,4 @@ def test(model, test_loader, criterion, device):
         
     test_loss /= len(test_loader.dataset)
     print('====> Test set loss: {:.4f}'.format(test_loss))
+    return test_loss

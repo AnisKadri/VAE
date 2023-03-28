@@ -6,11 +6,11 @@ import torch.distributions
 
 
 class VariationalAutoencoder(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, latent_dims, v_encoder, v_decoder, L = 30, first_kernel = None):
+    def __init__(self, input_size, hidden_size, num_layers, latent_dims, v_encoder, v_decoder, L = 30, slope = 0.2, first_kernel = None):
         super(VariationalAutoencoder, self).__init__()
         
-        self.encoder = v_encoder(input_size, hidden_size, num_layers, latent_dims, L, first_kernel)
-        self.decoder = v_decoder(input_size, hidden_size, num_layers, latent_dims, L, first_kernel)
+        self.encoder = v_encoder(input_size, hidden_size, num_layers, latent_dims, L, slope, first_kernel)
+        self.decoder = v_decoder(input_size, hidden_size, num_layers, latent_dims, L, slope, first_kernel)
         
     def reparametrization_trick(self, mu, logvar):
         std = torch.exp(0.5*logvar)
