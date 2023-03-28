@@ -28,7 +28,7 @@ def lin_size(n, num_layers, first_kernel = None):
     return n * 2 * num_layers
 
 class TCVAE_Encoder(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, latent_dims, L = 30, first_kernel = None):
+    def __init__(self, input_size, num_layers, latent_dims, L = 30, slope = 0.2, first_kernel = None):
         super(TCVAE_Encoder, self).__init__()   
         
         self.n =  lin_size(L, num_layers, first_kernel)
@@ -40,11 +40,11 @@ class TCVAE_Encoder(nn.Module):
             if i == 0:
                 if first_kernel == None: first_kernel = 2
                 self.cnn_layers.append(nn.Conv1d(input_size, input_size * 2, kernel_size=first_kernel, stride=2, padding=0))
-                self.cnn_layers.append(nn.LeakyReLU(0.2, True))
+                self.cnn_layers.append(nn.LeakyReLU(slope, True))
                 self.cnn_layers.append(nn.BatchNorm1d(input_size * 2))
             else:                
                 self.cnn_layers.append(nn.Conv1d(input_size * 2 * i, input_size * 2 * (i+1), kernel_size=2, stride=2, padding=0))
-                self.cnn_layers.append(nn.LeakyReLU(0.2, True))
+                self.cnn_layers.append(nn.LeakyReLU(slope, True))
                 self.cnn_layers.append(nn.BatchNorm1d(input_size * 2 * (i+1)))
                 
         
@@ -91,11 +91,11 @@ class TCVAE_Encoder(nn.Module):
 
 
 class LongShort_TCVAE_Encoder(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, latent_dims, L = 30, first_kernel = None):
+    def __init__(self, input_size, hidden_size, num_layers, latent_dims, L = 30, slope = 0.2, first_kernel = None):
         super(LongShort_TCVAE_Encoder, self).__init__()   
         
-        self.short_encoder = TCVAE_Encoder(input_size, hidden_size, num_layers, latent_dims, L, first_kernel= None)
-        self.long_encoder = TCVAE_Encoder(input_size, hidden_size, num_layers, latent_dims, L, first_kernel)
+        self.short_encoder = TCVAE_Encoder(input_size, num_layers, latent_dims, L, slope, first_kernel= None)
+        self.long_encoder = TCVAE_Encoder(input_size, num_layers, latent_dims, L, slope, first_kernel)
         
     def forward(self, x):        
         short_mu, short_logvar = self.short_encoder(x)        
@@ -104,5 +104,45 @@ class LongShort_TCVAE_Encoder(nn.Module):
         mu = torch.cat((short_mu, long_mu), axis=1)
         logvar = torch.cat((short_logvar, long_logvar), axis=1)
         
+        return mu, logvar
+    
+    
+class RnnEncoder(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers, latent_dims, L = 30, slope = 0.2, first_kernel = None): 
+        super(RnnEncoder, self).__init__()
+        
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers        
+        self.latent_dims = latent_dims 
+        
+        # Define the LSTM layer
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout = slope)
+        
+        self.encoder_mu = nn.Sequential(
+            nn.Linear(hidden_size, latent_dims),
+#             nn.ReLU(True)
+        )
+        self.encoder_logvar = nn.Sequential(
+            nn.Linear(hidden_size, latent_dims),
+#             nn.ReLU(True)
+        )
+        
+    def forward(self, x):
+        
+        x = x.permute(0, 2, 1)
+        # Initialize the hidden and cell states
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+               
+        
+        # Forward pass through the LSTM layer
+        x, (hn, cn) = self.lstm(x, (h0, c0))    
+        
+        ### MLP
+        mu = self.encoder_mu(x[:,-1,:])  
+        logvar = self.encoder_logvar(x[:,-1,:])
+        
+        # Return the output and final hidden and cell states
         return mu, logvar
 
