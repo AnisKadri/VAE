@@ -1,32 +1,56 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+# # Pipeline for testing models on MTS
+# 
+# ## Introduction
+# This notebook is meant to be a draft for different **VAE** (Variational Autoencoder) struktures to test them on generated **MTS** (Multivariate Time Series) with varying complexity.    
+# It uses the **dataGen** class to simulate some artificial manufakturing Data, where all the parameters and effects (Seasonalities, Trends, Couling and Anomalies) can be controlled.   
+# The **Encoders** and **Decoders** classes contain the different encoding, decoding blocks to form the vae, **vae** uses combines them together to form vae.   
+# **train** class contains the functions to train and test the models. All other functions for plotting the results and experimenting with the Latent Representation are stored in **utils**.  
+
 # In[1]:
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 
-# %matplotlib inline
-# %matplotlib notebook
 from dataGen import Gen
-from multiscale_vae import vae
-from train import slidingWindow, criterion, train, test
+from utils import compare, experiment
+from train import slidingWindow, criterion, train, test, objective
 from Encoders import LongShort_TCVAE_Encoder, RnnEncoder
 from Decoders import LongShort_TCVAE_Decoder, RnnDecoder
 from vae import VariationalAutoencoder
 
-import torch; torch.manual_seed(0)
-import torch.nn as nn
-import torch.nn.functional as F
+import torch; torch.manual_seed(955)
 import torch.optim as optim
-from torchvision.transforms import ToTensor
 from torch.utils.data import DataLoader
-from torch.utils.data import Dataset
-import torch.distributions
+import optuna
+from optuna.samplers import TPESampler
 
 
 import numpy as np
 import matplotlib.pyplot as plt
 import pprint
 
+
+# ## Generating the fake data
+# 
+# Here we specify all the parameters for the data generation.   
+# It is important to note that all the parameters control the shape of the data but the **MTS** is generated randomly with respect to these inputs. The actual paramters ($\mu$ and $\gamma$ at each point, indexes and values of each effect etc...) are stored in the **params** and **e_params** attributes of the class.
+# ### Channels
+# - **Periode:** The number of days to simulate.
+# - **Step:** How many minutes between each Measurement.
+# - **Val:** The maximum Value possible in y-axis.
+# - **n_channels:** The number of channels to simulate.   
+# 
+# ### Effects
+# All Effect but the **Noise** are applied on the mean and std level (internal) and not on the final values.
+# - **Pulse:** Can be a point or a rectangular pulse over an interval.
+# - **Trend:** Is basically a shift in one of the channels, can be linear or quadratic.
+# - **Seasonality:** Adds a sinusiudal fluctuation on a channel, the frequency here is 'how many oscillations per week'.
+# - **Std_variation:** Changes the std over an interval .
+# - **Channel_Coupling** Adds a coupling between two channels over the whole Simulation. If active, the Cov Matrix will have non-zero values beside the diagonal.
+# - **Noise:** Adds some noise on the generated values to simulate measurement noise &rarr; $y_{noise} = y +\epsilon $.
 
 # In[2]:
 
@@ -38,14 +62,14 @@ val = 100
 n_channels = 3
 effects = {
     "Pulse": {
-        "occurances":0,
-        "max_amplitude":2,   
-        "interval":20
+        "occurances":2,
+        "max_amplitude":1.5,   
+        "interval":40
         },
     "Trend": {
-        "occurances":1,
+        "occurances":2,
         "max_slope":0.005,
-        "type":"mixed"
+        "type":"linear"
         },
     "Seasonality": {
         "occurances":2,
@@ -68,8 +92,30 @@ effects = {
         }
     }
 
+X = Gen(periode, step, val, n_channels, effects)
+x, params, e_params = X.parameters()
+# pprint.pprint(params)
+pprint.pprint(e_params)
+X.show()
+
+
+# ## Model Init
+# The **vae** and **optimizer** are initialized in this cell.  
+# - **input_size** is the number of channels.
+# - **hidden_size** is the number of Neurons in the hidden size of the last MLP layer of the **Encoder** (to generate the $\mu$ and $\sigma$).
+# - **num_layer** is the number of layers in the main Structure (TCN or RNN for now).
+# - **latent_dims** is the number of variables in the Latent Representation.
+# - **v_encoder** which Encoder to use from the **Encoders** class.
+# - **v_decoder** which Encoder to use from the **Decoders** class.
+# - **L** is the window length.
+# - **slope** is the slope value for the LeakyRelu activation (if they are used).
+# - **first_kernel** is only relevant for the LongShort_TCVAE and specifies the Kernel length of the first conv layer in the long TCN.
+
+# In[3]:
+
+
 ### Init Model
-latent_dims = 15
+latent_dims = 12
 L = 60
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -86,15 +132,12 @@ v = VariationalAutoencoder(input_size = n_channels,
 opt = optim.Adam(v.parameters(), lr = 0.001571)
 
 
-# In[3]:
+print(v)
+torch.save(v, r'E:\Master\VAE\modules\vae1.pt')
 
 
-X = Gen(periode, step, val, n_channels, effects)
-x, params, e_params = X.parameters()
-# pprint.pprint(params)
-pprint.pprint(e_params)
-X.show()
-
+# ## Split and Dataloader
+# This cell is for splitting the Data and creating a Dataloader for each set. The dataloaders will return the data using an overlapping sliding window over the time axis.
 
 # In[4]:
 
@@ -106,10 +149,6 @@ n = x.shape[1]
 train_ = x[:, :int(0.8*n)]
 val_   = x[:, int(0.8*n):int(0.9*n)]
 test_  = x[:, int(0.9*n):]
-
-# train_set = slidingWindow(train, 30)
-# val_set = slidingWindow(val, 30)
-# test_set = slidingWindow(test, 30)
 
 train_data = DataLoader(slidingWindow(train_, L),
                         batch_size=10,
@@ -125,236 +164,63 @@ test_data = DataLoader(slidingWindow(test_, L),
                         )
 
 
+# ## Training 
+# The data is trained using the train class for 100 epochs. A hyperparameter optimisation can be also run (needs gpu)
+
 # In[5]:
 
 
-print(v)
-
-
-# In[6]:
-
-
-for epoch in range(1, 100):
+for epoch in range(1, 200):
     train(v, train_data, criterion, opt, device, epoch)
-
-
-# In[7]:
-
-
-def compare(dataset, model):
-    model.eval()
-    rec = []
-    x = []
-    with torch.no_grad():
-        for i, data in enumerate(dataset):
-            x_rec, mu, logvar = model(data)
-            z = v.reparametrization_trick(mu, logvar)
-
-            x.extend(data[:,:,0].detach().numpy())
-            rec.extend(x_rec[:].detach().numpy())
-        
-    print(mu[-1, :], logvar[-1, :])
-    plt.plot(rec, "r--")
-    plt.plot(x[:], "b-")
-    plt.ylim(0,100)
-    plt.grid(True)
-    
-    return z[-1, :]
-
-
-# In[8]:
-
-
-z = compare(train_data, v)
-
-
-# In[9]:
-
-
-z = compare(test_data, v)
-
-
-# In[9]:
-
-
 test(v, test_data, criterion, device)
 
 
 # In[ ]:
 
 
-# 1) Pulse/ Rechteck
-# 2) Trends (linear or not)
-# 3) Periodicity
-# std. effects
-# 5) coupling durch cov matrix
-# 6) Noise
-# 7) Effect of latent dim änderung, welche größe ist am besten  geeignet, soll latent_dim = n_channels sein? couploung durch hiarchie?
-# Modeling of interactions effects in die simulation hilft um die interpretation zu validieren, man kann die effecte aus der realen daten 
-# besser mathematisch verstehen
-# 8) Short and long term effects durch die verschiedenen Convolutions weights"aktivierung von neuronen/ welche neuraonen sind mehr active in welche fälle"
-# idee is to know what layers capt long term effects and which layers capt short terms to be able to better interpret the data
-# 9) also change the effects to be intern effects -> they happen on the level of mean and std rather than additif to the channels and let only be some random noise additif (y = x +epsilon)
-# all the rest (trends, seasonalities, pulses should happen on the level of mean and std)
-
-
-# Write and document all the steps I wanna do and make check list
-# try to make the data scales and dimention real (x axes represents tims -> days, hours, secs / are the seasonalities daily or weekly etc)
-
-
-# In[40]:
-
-
-# %matplotlib notebook
-import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
-
-import plotly.graph_objs as go
-from plotly.subplots import make_subplots
-from ipywidgets import interact
-
-
-
-def experiment(data, model):
-    x = []
-    z = []
-    rec = []
-    with torch.no_grad():
-        for i, data in enumerate(data):
-            x_rec, mu, logvar = model(data)
-            Z = v.reparametrization_trick(mu, logvar)
-            
-            x.extend(data[:,:,0].detach().numpy())
-            z.extend(Z[:].detach().numpy())
-            rec.extend(x_rec[:].detach().numpy())
-            
-    x = np.array(x)
-    z = np.array(z)
-    rec = np.array(rec)                 
-
-    # Create a figure and axis object
-    fig, axs = plt.subplots(2,1,figsize=(16,9), gridspec_kw={'height_ratios': [1, 2]})   
-    
-    # Plot the initial data
-    ax1 = axs[0]
-    ax2 = axs[1]
-    line1 = ax1.plot(x, "b")
-    line2 = ax1.plot( rec, "r")
-    line3 = ax2.plot( z, "g")
-    
-    
-    sliders = []
-    slider_axs = []
-              
-#     # Add a slider widget for variable 1
-    for i in range(z.shape[1]):
-        slider_axs.append( plt.axes([0.1, (0.00-0.05*i), 0.8, 0.03]) )
-        sliders.append( Slider(slider_axs[i], r'$Z_{}$'.format(i), -10, 10, valinit=z[-1,i]) )   
-
-
-    # Define a function to update the plot
-    def update(val):
-        
-        for i in range(z.shape[1]):
-            z[:,i] = sliders[i]. val            
-        rec = v.decoder(z)        
-
-        line2.set_ydata(rec)    
-        line3.set_ydata(z)
-
-        fig.canvas.draw_idle()
-
-    # Connect the sliders to the update function
-    for slider in sliders:
-        slider.on_changed(update)
-
-    # Show the plot
-    plt.show()
-
-
-# In[41]:
-
-
-# experiment(test_data, v)
-
-
-# In[5]:
-
-
-import optuna
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
-
-def objective(trial):
-    # Define the hyperparameters to optimize
-    learning_rate = trial.suggest_uniform('learning_rate', 1e-5, 1e-1)
-#     num_hidden_units = trial.suggest_int('num_hidden_units', 16, 256)
-    num_layers = trial.suggest_int('num_layers', 3, 5)
-#     dropout_rate = trial.suggest_uniform('dropout_rate', 0.0, 0.5)
-    latent_dims = trial.suggest_int('latent_dims', 3, 15)
-    first_kernel = trial.suggest_int('first_kernel', 15, 30)
-    slope = trial.suggest_int('slope', 0, 0.4)
-    
-    ### Init Model
-    latent_dims = 15
-    L = 60
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-    # v = vae(n_channels, L, latent_dims)
-    v = VariationalAutoencoder( input_size = n_channels,
-                                hidden_size = 30,
-                                num_layers = num_layers,
-                                latent_dims= latent_dims,
-                                v_encoder = LongShort_TCVAE_Encoder, # RnnEncoder, LongShort_TCVAE_Encoder,
-                                v_decoder = LongShort_TCVAE_Decoder, # RnnDecoder, LongShort_TCVAE_Decoder,
-                                L = L,
-                                slope = 0.2,
-                                first_kernel = first_kernel)
-    # Define the loss function and optimizer
-    optimizer = optim.Adam(v.parameters(), lr=learning_rate)
-    
-    for epoch in range(1, 100):
-        train(v, train_data, criterion, optimizer, device, epoch)
-    
-    test_loss = test(v, test_data, criterion, device)
-    print(test_loss)
-    
-    # Return the validation accuracy as the objective value
-    return test_loss
-
-
-# train_data = DataLoader(slidingWindow(train_, L),
-#                         batch_size=10,
-#                         shuffle = False
-#                         )
-# val_data = DataLoader(slidingWindow(val_, L),
-#                         batch_size=10,
-#                         shuffle = False
-#                         )
-# test_data = DataLoader(slidingWindow(test_, L),
-#                         batch_size=10,
-#                         shuffle = False
-#                         )
-
-# Define the number of epochs to train for
-# num_epochs = 100
-
 # # Define the Optuna study and optimize the hyperparameters
-# study = optuna.create_study(direction='minimize')
-# study.optimize(objective, n_trials=100)
+# epochs = 10
+# study = optuna.create_study(sampler=TPESampler(), direction='minimize')
+# study.optimize(lambda trial: objective(trial,
+#                                        VariationalAutoencoder,
+#                                        train_data,
+#                                        test_data,
+#                                        criterion,
+#                                        train,
+#                                        test,
+#                                        n_channels,
+#                                        L, epochs
+#                                       ),
+#                n_trials=10)
 
-# # Print the best hyperparameters and validation accuracy found
-# print('Best hyperparameters: {}'.format(study.best_params))
-# print('Best test loss: {:.2f}%'.format(study.best_value * 100))
+
+# 
+
+# ## Plot and Experiment
+# **compare** function plots the <span style="color:blue">Original Data</span> vs <span style="color:red">Reconstruction </span>.
+# **experiment** generates 2 interactive plots.
+# - **Left** is the same plot generated by compare (<span style="color:blue">Original Data</span> vs <span style="color:red">Reconstruction </span>)
+# - **Right** are the Latent Variables **Z** over time.   
+# The Sliders on the bottom control the values of each $z$ to see the effect it has on the reconstruction. both plots react to the change of $z$ values.
+
+# In[6]:
 
 
-# # In[6]:
+compare(train_data, v)
 
 
-# print('Best hyperparameters: {}'.format(study.best_params))
-# print('Best test loss: {:.2f}%'.format(study.best_value * 100))
+# In[7]:
+
+
+compare(test_data, v)
+torch.save(v, r'E:\Master\VAE\modules\vae.pt')
+
+
+
+# In[9]:
+
+
+experiment(test_data, v)
 
 
 # In[ ]:

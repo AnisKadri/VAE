@@ -14,7 +14,8 @@ import torch.distributions
 # from tqdm import tqdm as tq
 import numpy as np
 import matplotlib.pyplot as plt
-
+from Encoders import LongShort_TCVAE_Encoder, RnnEncoder
+from Decoders import LongShort_TCVAE_Decoder, RnnDecoder
 
 
 class slidingWindow(Dataset):
@@ -85,4 +86,37 @@ def test(model, test_loader, criterion, device):
         
     test_loss /= len(test_loader.dataset)
     print('====> Test set loss: {:.4f}'.format(test_loss))
+    return test_loss
+
+def objective(trial, model, train_data, test_data, criterion_fcn, train_fcn, test_fcn, n_channels, L, epochs):
+    # Define the hyperparameters to optimize
+    learning_rate = trial.suggest_uniform('learning_rate', 1e-5, 1e-1)
+    num_layers = trial.suggest_int('num_layers', 3, 5)
+    latent_dims = trial.suggest_int('latent_dims', 3, 15)
+    first_kernel = trial.suggest_int('first_kernel', 15, 30)
+    slope = trial.suggest_int('slope', 0, 0.4)
+
+    ### Init Model
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    v = model(input_size=n_channels,
+               hidden_size=30,
+               num_layers=num_layers,
+               latent_dims=latent_dims,
+               v_encoder=LongShort_TCVAE_Encoder,  # RnnEncoder, LongShort_TCVAE_Encoder,
+               v_decoder=LongShort_TCVAE_Decoder,  # RnnDecoder, LongShort_TCVAE_Decoder,
+               L=L,
+               slope=slope,
+               first_kernel=first_kernel)
+    # Define the loss function and optimizer
+    optimizer = optim.Adam(v.parameters(), lr=learning_rate)
+
+    for epoch in range(1, epochs):
+        train_fcn(v, train_data, criterion_fcn, optimizer, device, epoch)
+
+    test_loss = test_fcn(v, test_data, criterion_fcn, device)
+    print(test_loss)
+
+    # Return the validation accuracy as the objective value
     return test_loss
