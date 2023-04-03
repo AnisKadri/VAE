@@ -85,7 +85,7 @@ test_data = DataLoader(slidingWindow(test_, L),
                         batch_size=10,
                         shuffle = False
                         )
-v = torch.load(r'E:\Master\VAE\modules\vae.pt.')
+v = torch.load(r'modules\vae.pt')
 opt = optim.Adam(v.parameters(), lr = 0.001571)
 # for epoch in range(1, 100):
 #     train(v, train_data, criterion, opt, device, epoch)
