@@ -74,11 +74,14 @@ class TCVAE_Encoder(nn.Module):
          
 
     def forward(self, x):
-        ### CNN
+        ### CNN: BCL
         for i, cnn in enumerate(self.cnn_layers):
             x = cnn(x)
 #         x = self.cnn_layers(x) 
+
+        print(x.shape)
         x = x.view(x.size(0), -1)
+        print(x.shape)
         
         ### MLP
         mu = self.encoder_mu(x)  

@@ -47,6 +47,22 @@ def criterion(recon_x, x, mu, logvar):
     loss = recon_loss + kld_loss
     return loss
 
+### Cost function
+def criterion_tol(x_recon, x, mu, logvar, tol = 1):
+    ### reconstruction loss
+
+    recon_loss = torch.where( torch.abs(x_recon -x) < tol, 0, F.mse_loss(x_recon, x, reduction='sum')).sum()
+    
+#     recon_loss = F.mse_loss(x_recon, x, reduction='sum')
+
+
+    ### KL divergence loss
+    kld_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    
+    ### total loss
+    loss = recon_loss + kld_loss
+    return loss
+
 ### Train function
 def train(model, train_loader, criterion, optimizer, device, epoch):
     model.train()
@@ -56,11 +72,13 @@ def train(model, train_loader, criterion, optimizer, device, epoch):
         
         data = data.to(device)
         optimizer.zero_grad()
+#         print(data.shape)
         x_rec, mu, logvar = model(data)
 #         print(x_rec.shape)
-#         print(data[:,:,0])
+#         print(data[:,:,-1].shape)
+#         print(data[:,:,-1])
 
-        loss = criterion(x_rec, data[:,:,0], mu, logvar)
+        loss = criterion(x_rec, data[:,:,-1], mu, logvar)
         loss.backward()
 
         optimizer.step()
