@@ -63,7 +63,7 @@ x, params, e_params = X.parameters()
 pprint.pprint(e_params)
 # X.show()
 
-latent_dims = 15
+latent_dims = 12
 L = 60
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -92,4 +92,4 @@ opt = optim.Adam(v.parameters(), lr = 0.001571)
 # test(v, test_data, criterion, device)
 
 compare(test_data, v)
-experiment(test_data, v)
+experiment(test_data, v, latent_dims)

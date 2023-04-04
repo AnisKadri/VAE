@@ -133,7 +133,7 @@ opt = optim.Adam(v.parameters(), lr = 0.001571)
 
 
 print(v)
-torch.save(v, r'E:\Master\VAE\modules\vae1.pt')
+torch.save(v, r'modules\vae1.pt')
 
 
 # ## Split and Dataloader
@@ -213,7 +213,7 @@ compare(train_data, v)
 
 
 compare(test_data, v)
-torch.save(v, r'E:\Master\VAE\modules\vae.pt')
+torch.save(v, r'modules\vae.pt')
 
 
 
