@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import matplotlib.dates as mdates
-np.random.seed(10)
+
 
 class Gen():
     def __init__(self, periode = 30, step = 5, val = 1000, nchannels = 3, effects = None):  

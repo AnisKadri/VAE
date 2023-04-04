@@ -21,7 +21,7 @@ from Encoders import LongShort_TCVAE_Encoder, RnnEncoder
 from Decoders import LongShort_TCVAE_Decoder, RnnDecoder
 from vae import VariationalAutoencoder
 
-import torch; torch.manual_seed(955)
+import torch; torch.manual_seed(0)
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import optuna
@@ -59,10 +59,10 @@ import pprint
 periode = 15 #days
 step = 5 # mess interval in minutes
 val = 100
-n_channels = 3
+n_channels = 2
 effects = {
     "Pulse": {
-        "occurances":2,
+        "occurances":0,
         "max_amplitude":1.5,   
         "interval":40
         },
@@ -72,7 +72,7 @@ effects = {
         "type":"linear"
         },
     "Seasonality": {
-        "occurances":2,
+        "occurances":1,
         "frequency_per_week":(7, 14), # min and max occurances per week
         "amplitude_range":(5, 20),
         },
@@ -115,25 +115,25 @@ X.show()
 
 
 ### Init Model
-latent_dims = 12
+latent_dims = 2
 L = 60
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # v = vae(n_channels, L, latent_dims)
 v = VariationalAutoencoder(input_size = n_channels,
                            hidden_size = 30,
-                           num_layers = 3,
+                           num_layers = 4,
                            latent_dims= latent_dims,
                            v_encoder = LongShort_TCVAE_Encoder, # RnnEncoder, LongShort_TCVAE_Encoder,
                            v_decoder = LongShort_TCVAE_Decoder, # RnnDecoder, LongShort_TCVAE_Decoder,
                            L = L,
                            slope = 0.2,
-                           first_kernel = 21)
+                           first_kernel = 9*5)
 opt = optim.Adam(v.parameters(), lr = 0.001571)
 
 
 print(v)
-torch.save(v, r'modules\vae1.pt')
+torch.save(v, r'modules\vae2.pt')
 
 
 # ## Split and Dataloader
@@ -213,14 +213,14 @@ compare(train_data, v)
 
 
 compare(test_data, v)
-torch.save(v, r'modules\vae.pt')
+torch.save(v, r'modules\vae2.pt')
 
 
 
 # In[9]:
 
 
-experiment(test_data, v)
+experiment(test_data, v, latent_dims)
 
 
 # In[ ]:

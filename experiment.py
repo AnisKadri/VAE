@@ -24,7 +24,7 @@ import pprint
 periode = 15 #days
 step = 5 # mess interval in minutes
 val = 100
-n_channels = 3
+n_channels = 2
 effects = {
     "Pulse": {
         "occurances":2,
@@ -63,7 +63,7 @@ x, params, e_params = X.parameters()
 pprint.pprint(e_params)
 # X.show()
 
-latent_dims = 12
+latent_dims = 2
 L = 60
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -85,7 +85,7 @@ test_data = DataLoader(slidingWindow(test_, L),
                         batch_size=10,
                         shuffle = False
                         )
-v = torch.load(r'modules\vae.pt')
+v = torch.load(r'modules\vae2.pt')
 opt = optim.Adam(v.parameters(), lr = 0.001571)
 # for epoch in range(1, 100):
 #     train(v, train_data, criterion, opt, device, epoch)

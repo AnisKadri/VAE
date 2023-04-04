@@ -12,18 +12,18 @@ from matplotlib.widgets import Slider
 
 # In[ ]:
 
-
+@torch.no_grad()
 def compare(dataset, model):
     model.eval()
     rec = []
     x = []
-    with torch.no_grad():
-        for i, data in enumerate(dataset):
-            x_rec, mu, logvar = model(data)
-            z = model.reparametrization_trick(mu, logvar)
 
-            x.extend(data[:, :, 0].detach().numpy())
-            rec.extend(x_rec[:].detach().numpy())
+    for i, data in enumerate(dataset):
+        x_rec, mu, logvar = model(data)
+        z = model.reparametrization_trick(mu, logvar)
+
+        x.extend(data[:, :, 0].detach().numpy())
+        rec.extend(x_rec[:].detach().numpy())
 
     plt.plot(rec, "r--")
     plt.plot(x[:], "b-")
@@ -72,14 +72,13 @@ def sample_from_data(model, data, n, latent_dims):
     return x, mu, logvar, z, x_rec, x_rec_mean
 
 @torch.no_grad()
-def sample_from_z(model, mu, logvar, n, slider_idx, slider_val):  #
+def sample_from_z(model, mu, logvar, n, n_channels, slider_idx, slider_val):  #
 
     # Input to tensor and init the Reconstructions list
-    # mu, logvar, slider_idx, slider_val = map(torch.from_numpy, (mu, logvar,  slider_idx, slider_val))   # mu, logvar Shape: TC
     mu, logvar = torch.from_numpy(mu), torch.from_numpy(logvar) # Shape: TC
     slider_val = torch.tensor(slider_val)
     print("mu and logvar",mu.shape, logvar.shape)
-    REC = torch.empty((0, mu.shape[0], 3))
+    REC = torch.empty((0, mu.shape[0], n_channels))
 
     # Generate and cat
     for i in range(n):
@@ -136,7 +135,8 @@ def experiment(data, model, latent_dims):
     def update(val, idx, mu, logvar, z, sliders):
         # save z and sample new rec and rec_mean
         temp = np.copy(z)
-        rec, rec_mean = sample_from_z(model, mu, logvar, 100, idx, val)
+        n_channels = x.shape[1]
+        rec, rec_mean = sample_from_z(model, mu, logvar, 100, n_channels, idx, val)
 
         # redraw rec, rec_mean and z
         for channel, line in enumerate(rec_lines):
