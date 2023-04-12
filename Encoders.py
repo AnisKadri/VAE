@@ -1,16 +1,10 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
-
-
 import torch; torch.manual_seed(0)
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.distributions
-
-
-# In[2]:
+import torch.distributions as D
 
 
 def lin_size(n, num_layers, first_kernel = None):
@@ -31,12 +25,17 @@ class TCVAE_Encoder(nn.Module):
     def __init__(self, input_size, num_layers, latent_dims, L = 30, slope = 0.2, first_kernel = None):
         super(TCVAE_Encoder, self).__init__()   
         
-        self.n =  lin_size(L, num_layers, first_kernel)
-        
+        self.n =  lin_size(L, num_layers, first_kernel)        
         self.cnn_layers = nn.ModuleList()
+        self.n_channels = input_size
         
-        for i in range(0, num_layers):
-            
+        def init_weights(m):
+            if isinstance(m, nn.Conv1d):
+                torch.nn.init.kaiming_uniform_(m.weight, mode="fan_in", nonlinearity="leaky_relu")
+                m.bias.data.fill_(0.01)
+                
+        # CNN Layers that double the channels each time
+        for i in range(0, num_layers):            
             if i == 0:
                 if first_kernel == None: first_kernel = 2
                 self.cnn_layers.append(nn.Conv1d(input_size, input_size * 2, kernel_size=first_kernel, stride=2, padding=0))
@@ -47,7 +46,7 @@ class TCVAE_Encoder(nn.Module):
                 self.cnn_layers.append(nn.LeakyReLU(slope, True))
                 self.cnn_layers.append(nn.BatchNorm1d(input_size * 2 * (i+1)))
                 
-        
+        # MLP Layers for Mu and logvar output
         self.encoder_mu = nn.Sequential(
             nn.Linear(self.n * input_size, latent_dims),
 #             nn.ReLU(True)
@@ -55,46 +54,71 @@ class TCVAE_Encoder(nn.Module):
         self.encoder_logvar = nn.Sequential(
             nn.Linear(self.n * input_size, latent_dims),
 #             nn.ReLU(True)
-        )
+        )   
         
-#         ### Linear section: mean
-#         self.encoder_mu = nn.Sequential(
-#             nn.Linear(self.n * n_channels*8, latent_dims)
-# #             nn.Linear(self.n * n_channels*8, 32*latent_dims),
-# #             nn.ReLU(True),
-# #             nn.Linear(32*latent_dims, latent_dims)
-#         )
-        
-#         self.encoder_logvar = nn.Sequential(
-#             nn.Linear(self.n * n_channels*8, latent_dims)
-# #             nn.Linear(self.n * n_channels*8, 32*latent_dims),
-# #             nn.ReLU(True),
-# #             nn.Linear(32*latent_dims, latent_dims)
-#         )
+        #Init CNN
+        self.cnn_layers.apply(init_weights)
          
-
     def forward(self, x):
-        ### CNN: BCL
+        ### CNN
         for i, cnn in enumerate(self.cnn_layers):
             x = cnn(x)
-#         x = self.cnn_layers(x) 
-
-        print(x.shape)
         x = x.view(x.size(0), -1)
-        print(x.shape)
         
         ### MLP
         mu = self.encoder_mu(x)  
         logvar = self.encoder_logvar(x)
+        mu = mu.view(mu.shape[0], self.n_channels, -1)
+        logvar = logvar.view(logvar.shape[0], self.n_channels, -1)
+
         
         return mu, logvar
+    
+class MST_Encoder(nn.Module):
+    def __init__(self, n_channels, num_layers, slope = 0.2, first_kernel = None):
+        super(MST_Encoder, self).__init__()   
+        
+        self._n_channels = n_channels
+        self._num_layers = num_layers
+        self._slope = slope
+        self._first_kernel = first_kernel
+        
+        def init_weights(m):
+            if isinstance(m, nn.Conv1d):
+                torch.nn.init.kaiming_uniform_(m.weight, mode="fan_in", nonlinearity="leaky_relu")
+                m.bias.data.fill_(0.01)
+        
+        self.cnn_layers = nn.ModuleList()
+             
+        for i in range(0, self._num_layers):  
+            # Kernel for firs layer is 2 if short or 'first_kernel' for long
+            if i == 0:
+                if self._first_kernel == None: self._first_kernel = 2
+                self.cnn_layers.append(nn.Conv1d(self._n_channels, self._n_channels, kernel_size=self._first_kernel, stride=2, padding=0))
+                self.cnn_layers.append(nn.LeakyReLU(self._slope, True))
+                self.cnn_layers.append(nn.BatchNorm1d(self._n_channels))
+            # Last layer outputs 2* n_channels
+            elif i == self._num_layers-1:
+                self.cnn_layers.append(nn.Conv1d(self._n_channels, 2 * self._n_channels, kernel_size=2, stride=2, padding=0))
+                self.cnn_layers.append(nn.LeakyReLU(self._slope, True))
+                self.cnn_layers.append(nn.BatchNorm1d(2 * self._n_channels))
+            # CNN Layers that don#t change n_channels   
+            else:                
+                self.cnn_layers.append(nn.Conv1d(self._n_channels, self._n_channels, kernel_size=2, stride=2, padding=0))
+                self.cnn_layers.append(nn.LeakyReLU(self._slope, True))
+                self.cnn_layers.append(nn.BatchNorm1d(self._n_channels))  
+                
+        # Init Layers
+        self.cnn_layers.apply(init_weights)
 
-
-# In[ ]:
-
+    def forward(self, x):
+        ### CNN Shape BLC
+        for i, cnn in enumerate(self.cnn_layers):
+            x = cnn(x)     
+        return x
 
 class LongShort_TCVAE_Encoder(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, latent_dims, L = 30, slope = 0.2, first_kernel = None):
+    def __init__(self, input_size, num_layers, latent_dims, L = 30, slope = 0.2, first_kernel = None):
         super(LongShort_TCVAE_Encoder, self).__init__()   
         
         self.short_encoder = TCVAE_Encoder(input_size, num_layers, latent_dims, L, slope, first_kernel= None)
@@ -149,3 +173,98 @@ class RnnEncoder(nn.Module):
         # Return the output and final hidden and cell states
         return mu, logvar
 
+class MST_VAE_Encoder(nn.Module):
+    def __init__(self, n_channels, num_layers, slope = 0.2, first_kernel = None):
+        super(MST_VAE_Encoder, self).__init__()  
+        
+        self._n_channels = n_channels
+        self._num_layers = num_layers
+        self._slope = slope
+        self._first_kernel = first_kernel
+        
+        
+        self.short_encoder = MST_Encoder(self._n_channels, self._num_layers, self._slope, first_kernel= None)
+        self.long_encoder = MST_Encoder(self._n_channels, self._num_layers, self._slope, self._first_kernel)    
+        
+        self.reduction_layer = nn.Conv1d(2*self._n_channels,self._n_channels, kernel_size=1, stride=1, padding=0)
+        
+        self.encoder_mu = nn.Conv1d(self._n_channels, self._n_channels, kernel_size=1, stride=1, padding=0)
+        self.encoder_logvar = nn.Conv1d(self._n_channels, self._n_channels, kernel_size=1, stride=1, padding=0)
+        self.leakyrelu = nn.LeakyReLU(self._slope)
+
+        
+        torch.nn.init.kaiming_uniform_(self.reduction_layer.weight, mode="fan_in", nonlinearity="leaky_relu")
+        torch.nn.init.kaiming_uniform_(self.encoder_mu.weight, mode="fan_in", nonlinearity="leaky_relu")
+        torch.nn.init.kaiming_uniform_(self.encoder_logvar.weight, mode="fan_in", nonlinearity="leaky_relu")
+
+
+    def forward(self, x):
+        
+        x_short = self.short_encoder(x)       
+        x_long = self.long_encoder(x)   
+        
+        x_cat = torch.cat((x_short, x_long), dim = 2)                
+        x_red = self.reduction_layer(x_cat)
+        x_red = self.leakyrelu(x_red)  
+        
+        mu = self.encoder_mu(x_red)
+        logvar = torch.clamp(self.encoder_logvar(x_red), min=-5, max = 2)
+    
+#         print("Input Shape", x.shape)
+#         print("x_short Shape", x_short.shape)
+#         print("x_long Shape", x_long.shape)
+#         print("Cat Shape", x_cat.shape)
+#         print("After Reduction Shape", x_red.shape)
+#         print("mu Shape", mu.shape)
+#         print("logvar Shape", logvar.shape)        
+     
+        return mu, logvar
+    
+class MST_VAE_Encoder_dist(nn.Module):
+    def __init__(self, n_channels, num_layers, slope = 0.2, first_kernel = None):
+        super(MST_VAE_Encoder_dist, self).__init__()  
+        
+        self._n_channels = n_channels
+        self._num_layers = num_layers
+        self._slope = slope
+        self._first_kernel = first_kernel
+        
+        
+        self.short_encoder = MST_Encoder(self._n_channels, self._num_layers, self._slope, first_kernel= None)
+        self.long_encoder = MST_Encoder(self._n_channels, self._num_layers, self._slope, self._first_kernel)    
+        
+        self.reduction_layer = nn.Conv1d(2*self._n_channels,self._n_channels, kernel_size=1, stride=1, padding=0)
+        
+        self.encoder_mu = nn.Conv1d(self._n_channels, self._n_channels, kernel_size=1, stride=1, padding=0)
+        self.encoder_logvar = nn.Conv1d(self._n_channels, self._n_channels, kernel_size=1, stride=1, padding=0)
+        self.leakyrelu = nn.LeakyReLU(self._slope)
+
+        
+        torch.nn.init.kaiming_uniform_(self.reduction_layer.weight, mode="fan_in", nonlinearity="leaky_relu")
+        torch.nn.init.kaiming_uniform_(self.encoder_mu.weight, mode="fan_in", nonlinearity="leaky_relu")
+        torch.nn.init.kaiming_uniform_(self.encoder_logvar.weight, mode="fan_in", nonlinearity="leaky_relu")
+
+
+    def forward(self, x):
+        
+        x_short = self.short_encoder(x)       
+        x_long = self.long_encoder(x)   
+        
+        x_cat = torch.cat((x_short, x_long), dim = 2)                
+        x_red = self.reduction_layer(x_cat)
+        x_red = self.leakyrelu(x_red)  
+        
+        mu = self.encoder_mu(x_red)
+        logvar = torch.clamp(self.encoder_logvar(x_red), min=-5, max = 2)
+    
+#         print("Input Shape", x.shape)
+#         print("x_short Shape", x_short.shape)
+#         print("x_long Shape", x_long.shape)
+#         print("Cat Shape", x_cat.shape)
+#         print("After Reduction Shape", x_red.shape)
+#         print("mu Shape", mu.shape)
+#         print("logvar Shape", logvar.shape)        
+     
+
+        z_dist = D.Normal(loc=mu, scale=torch.exp(0.5*logvar))
+        return {'z': z_dist}

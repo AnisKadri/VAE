@@ -47,38 +47,83 @@ def criterion(recon_x, x, mu, logvar):
     loss = recon_loss + kld_loss
     return loss
 
-### Cost function
-def criterion_tol(x_recon, x, mu, logvar, tol = 1):
-    ### reconstruction loss
+def train_sgvb_loss(qnet, pnet, metrics_dict, prefix='pretrain_', name=None):
+    with torch.autograd.profiler.record_function(name if name else 'pre_sgvb_loss'):
+        logpx_z = pnet['x'].log_prob()
+        logqz_x = qnet['z'].log_prob()
+        logpz = pnet['z'].log_prob()
 
-    recon_loss = torch.where( torch.abs(x_recon -x) < tol, 0, F.mse_loss(x_recon, x, reduction='sum')).sum()
+        kl_term = torch.mean(logqz_x - logpz)
+        recons_term = torch.mean(logpx_z)
+        metrics_dict[prefix + 'recons'] = recons_term.item()
+        metrics_dict[prefix + 'kl'] = kl_term.item()
+        
+        
+
+        return -torch.mean(logpx_z + 0.2 * (logpz - logqz_x))
     
-#     recon_loss = F.mse_loss(x_recon, x, reduction='sum')
+def train_vae(train_loader, encoder, decoder, optimizer, device, num_epochs):
+    for epoch in range(num_epochs):
+        # Set the network to train mode
+        encoder.train()
+        decoder.train()
+        
+        # Iterate over the training data
+        for batch_idx, data in enumerate(train_loader):
+            data = data.to(device)
+            # Zero the gradients
+            optimizer.zero_grad()
+            
+            # Forward pass through the encoder and compute the latent variables
+            qnet = encoder(data)
+            
+            # Sample from the latent variables and forward pass through the decoder
+            z_sample = qnet['z'].rsample()
+            pnet = decoder(z_sample)
+            x_rec = pnet['x'].rsample()
+            
+            # Compute the loss using the SGVB estimator
+            metrics_dict = {}
+            # Forward pass through the decoder and compute the reconstructed data
+#             print("data", data.shape)
+            logpx_z = pnet['x'].log_prob(x_rec).sum(dim=-1)
+            logqz_x = qnet['z'].log_prob(z_sample).sum(dim=-1)
+            logpz = torch.distributions.Normal(0, 1).log_prob(z_sample).sum(dim=-1)
 
-
-    ### KL divergence loss
-    kld_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    
-    ### total loss
-    loss = recon_loss + kld_loss
-    return loss
+            # Compute the loss using the SGVB estimator
+            kl_term = (logqz_x - logpz).mean()
+            recons_term = logpx_z.mean()
+            loss = - (recons_term + 0.2 * kl_term)
+            
+            metrics_dict['pretrain_' + 'recons'] = recons_term.item()
+            metrics_dict['pretrain_' + 'kl'] = kl_term.item()
+            
+            # Backward pass and update the parameters
+            loss.backward()
+            optimizer.step()
+            
+            # Print the loss and other metrics
+            if batch_idx % 100 == 0:
+                print(f"Epoch {epoch}, Batch {batch_idx}: Loss = {loss.item()}, "
+                      f"Reconstruction = {metrics_dict['pretrain_recons']}, "
+                      f"KL = {metrics_dict['pretrain_kl']}")
 
 ### Train function
-def train(model, train_loader, criterion, optimizer, device, epoch):
+def train(model, train_loader, criterion, optimizer, device, epoch, VQ = True):
     model.train()
     train_loss = 0
 
     for batch_idx, data in enumerate(train_loader):
         
         data = data.to(device)
-        optimizer.zero_grad()
-#         print(data.shape)
-        x_rec, mu, logvar = model(data)
+        optimizer.zero_grad()        
 #         print(x_rec.shape)
-#         print(data[:,:,-1].shape)
-#         print(data[:,:,-1])
-
-        loss = criterion(x_rec, data[:,:,-1], mu, logvar)
+#         print(data[:,:,0])
+        if VQ:
+            x_rec, loss, mu, logvar = model(data)
+        else:
+            x_rec, mu, logvar = model(data)
+            loss = criterion(x_rec, data[:,:,0], mu, logvar)
         loss.backward()
 
         optimizer.step()

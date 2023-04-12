@@ -15,17 +15,44 @@ import matplotlib.gridspec as gridspec
 # In[ ]:
 
 
-def compare(dataset, model):
+def compare(dataset, model, VQ=True):
     model.eval()
     rec = []
     x = []
     with torch.no_grad():
         for i, data in enumerate(dataset):
-            x_rec, mu, logvar = model(data)
+            if VQ:
+                x_rec, loss, mu, logvar = model(data)
+            else:
+                x_rec, mu, logvar = model(data)
             z = model.reparametrization_trick(mu, logvar)
 
             x.extend(data[:,:,0].detach().numpy())
             rec.extend(x_rec[:].detach().numpy())
+        
+    plt.plot(rec, "r--")
+    plt.plot(x[:], "b-")
+    plt.ylim(0,100)
+    plt.grid(True)
+    
+def compare_dist(dataset, encoder, decoder):
+    encoder.eval()
+    decoder.eval()
+    rec = []
+    x = []
+    with torch.no_grad():
+        for i, data in enumerate(dataset):
+             # Forward pass through the encoder and compute the latent variables
+            qnet = encoder(data)
+            
+            # Sample from the latent variables and forward pass through the decoder
+            z_sample = qnet['z'].rsample()
+            pnet = decoder(z_sample)
+            x_rec = pnet['x'].rsample()
+#             z = model.reparametrization_trick(mu, logvar)
+
+            x.extend(data[:,:,0].detach().numpy())
+            rec.extend(x_rec[:,:,0].detach().numpy())
         
     plt.plot(rec, "r--")
     plt.plot(x[:], "b-")
