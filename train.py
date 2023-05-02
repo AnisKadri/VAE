@@ -44,9 +44,33 @@ def criterion(recon_x, x, mu, logvar):
     kld_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     
     ### total loss
-    loss = recon_loss + kld_loss
+    loss = recon_loss + 1*kld_loss
     return loss
 
+
+def sample_mean(model, batch, n):
+    batch_size = batch.shape[0]
+    n_channels = batch.shape[1]
+    latent_dims = model.encoder.latent_dims
+
+    mu, logvar = (torch.empty((batch_size, 2 * n_channels, latent_dims// n_channels, 0)).to(batch) for _ in range(2))
+    REC = torch.empty(batch_size, n_channels, 0).to(batch)
+    # print(REC.shape)
+    # print(mu.shape)
+
+    for i in range(n):
+        rec, _mu, _logvar = model(batch)
+
+        REC = torch.cat((REC, rec.unsqueeze(-1)), dim=-1)
+        mu = torch.cat((mu, _mu.unsqueeze(-1)), dim=-1)
+        logvar = torch.cat((logvar, _logvar.unsqueeze(-1)), dim=-1)
+
+    # print("shapes after cat: mu, logvar, REC ", mu.shape, logvar.shape, REC.shape)
+    mu, logvar = (torch.mean(t, dim=-1) for t in [mu, logvar])
+    REC = torch.mean(REC, dim=-1)
+    #     print("shapes after mean: mu, logvar, REC ", mu.shape, logvar.shape, REC.shape)
+
+    return REC, mu, logvar
 def train_sgvb_loss(qnet, pnet, metrics_dict, prefix='pretrain_', name=None):
     with torch.autograd.profiler.record_function(name if name else 'pre_sgvb_loss'):
         logpx_z = pnet['x'].log_prob()
@@ -117,13 +141,16 @@ def train(model, train_loader, criterion, optimizer, device, epoch, VQ = True):
         
         data = data.to(device)
         optimizer.zero_grad()        
-#         print(x_rec.shape)
-#         print(data[:,:,0])
+
         if VQ:
             x_rec, loss, mu, logvar = model(data)
         else:
-            x_rec, mu, logvar = model(data)
+#             x_rec, mu, logvar = model(data)
+            x_rec, mu, logvar = sample_mean(model, data, 10)
+            # x_rec_window_length = x_rec.shape[2]
             loss = criterion(x_rec, data[:,:,0], mu, logvar)
+        # print(x_rec.shape)
+        # print(data[:, :, 0].shape)
         loss.backward()
 
         optimizer.step()

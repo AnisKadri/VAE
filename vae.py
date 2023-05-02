@@ -6,11 +6,11 @@ import torch.distributions
 
 
 class VariationalAutoencoder(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, latent_dims, v_encoder, v_decoder, L = 30, slope = 0.2, first_kernel = None):
+    def __init__(self, input_size, num_layers, latent_dims, v_encoder, v_decoder, L = 30, slope = 0.2, first_kernel = None):
         super(VariationalAutoencoder, self).__init__()
         
-        self.encoder = v_encoder(input_size, hidden_size, num_layers, latent_dims, L, slope, first_kernel)
-        self.decoder = v_decoder(input_size, hidden_size, num_layers, latent_dims, L, slope, first_kernel)
+        self.encoder = v_encoder(input_size, num_layers, latent_dims, L, slope, first_kernel)
+        self.decoder = v_decoder(input_size, num_layers, latent_dims, L, slope, first_kernel)
         
     def reparametrization_trick(self, mu, logvar):
         std = torch.exp(0.5*logvar)
@@ -20,7 +20,7 @@ class VariationalAutoencoder(nn.Module):
     def forward(self, x):
         mu, logvar = self.encoder(x)
         z = self.reparametrization_trick(mu, logvar)
-        return self.decoder(z), mu, logvar   
+        return self.decoder(z), mu, logvar
     
 # CodeBook Dim: K x D
 # D is the number of Channels
@@ -122,7 +122,8 @@ class VQ_MST_VAE(nn.Module):
 #         mu_dec, logvar_dec = self.decoder(e)
 #         x_rec = self.reparametrization_trick(mu_dec, mu_dec)
         x_rec = self.decoder(e)
-        loss_rec = F.mse_loss(x_rec[:,:,0], x[:,:,0], reduction='sum')
+        #x_rec_window_length = x_rec.shape[2]
+        loss_rec = F.mse_loss(x_rec, x[:,:,0], reduction='sum')
         loss = loss_rec + loss_quantize
 #         print("----------------Encoder Output-------------")
 #         print("mu and logvar", mu.shape, logvar.shape)
@@ -135,4 +136,4 @@ class VQ_MST_VAE(nn.Module):
 #         print("----------------Decoder Output-------------")
 #         print("mu and logvar Decoder", mu_dec.shape, logvar_dec.shape)
 #         print("rec shape", x_rec.shape)
-        return x_rec[:,:,0], loss, mu, logvar 
+        return x_rec, loss, mu, logvar
