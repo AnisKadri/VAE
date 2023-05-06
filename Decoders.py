@@ -129,7 +129,7 @@ class MST_Decoder(nn.Module):
     def forward(self, x):
         ### CNN Shape BCL
         for i, cnn in enumerate(self.cnn_layers):
-            #             print(x.shape)
+            # print(x.shape)
             x = cnn(x)
         return x
 
@@ -218,10 +218,14 @@ class MST_VAE_Decoder_Linear(nn.Module):
     def forward(self, x):
         x_short_in = x  # [:,:,:2]   # Either take the concatenated L_sl or split it into Ls and Ll
         x_long_in = x  # [:,:,3:]    # Either take the concatenated L_sl or split it into Ls and Ll
+        # print("decoder input ", x.shape)
         x = x.view(x.shape[0], -1)
+        # print("decoder input reshaped ", x.shape)
         x = self.decoder_lin(x)
+        # print("decoder input after lin ", x.shape)
         # x = x.view(x.shape[0], self._n_channels, -1)
-        x = x.view(x.shape[0],x.shape[1],1)
+        x = x.view(x.shape[0],self._n_channels, -1)
+        # print("decoder input reshaped after lin ", x.shape)
 
         x_short = self.short_decoder(x)  # B.2C.L_dec
         x_long = self.long_decoder(x)  # B.2C.L_dec

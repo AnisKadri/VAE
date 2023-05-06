@@ -51,9 +51,9 @@ def criterion(recon_x, x, mu, logvar):
 def sample_mean(model, batch, n):
     batch_size = batch.shape[0]
     n_channels = batch.shape[1]
-    latent_dims = model.encoder.latent_dims
+    latent_dims = model.encoder._latent_dims
 
-    mu, logvar = (torch.empty((batch_size, 2 * n_channels, latent_dims// n_channels, 0)).to(batch) for _ in range(2))
+    mu, logvar = (torch.empty((batch_size, n_channels, latent_dims// n_channels, 0)).to(batch) for _ in range(2))
     REC = torch.empty(batch_size, n_channels, 0).to(batch)
     # print(REC.shape)
     # print(mu.shape)

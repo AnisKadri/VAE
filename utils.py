@@ -7,6 +7,10 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, TextBox, Button
+import ipywidgets as widgets
+from matplotlib.gridspec import GridSpec
+from ipywidgets import interact
+from IPython.display import display, clear_output
 import matplotlib.gridspec as gridspec
 
 
@@ -64,7 +68,7 @@ def compare_dist(dataset, encoder, decoder):
 @torch.no_grad()
 def sample_from_data_TC(model, data, n, latent_dims, VQ=True):
     # Get necessary variables for the init
-    latent_dims = 2*latent_dims
+    latent_dims = latent_dims
 
     n_channels = data.dataset.data.shape[0]
     T = data.dataset.data.shape[1] - data.dataset.L
@@ -227,45 +231,54 @@ def sample_from_data_VQ(model, data, n):
     # Get necessary variables for the init
     # latent_dims = latent_dims
 
-    n_channels = data.dataset.data.shape[0]
-    latent_dims = n_channels* 2
-    T = data.dataset.data.shape[1] - data.dataset.L
+    # Get the model parameters
+    n_channels = model._n_channels
+    latent_dims = model._latent_dims
+    num_embed = model.quantizer._num_embed
+    dim_embed = model.quantizer._dim_embed
+    code_book = model.quantizer._embedding
+    L = model._L
+
+    T = data.dataset.data.shape[1] - L
     batch_size = data.batch_size
 
     # Init tensors to store results
     x = torch.empty((T, n_channels))
-    mu, logvar, z = (torch.empty((n, T, latent_dims)) for _ in range(3))
+    mu, logvar, z, embed = (torch.empty((n, T, n_channels*2, latent_dims)) for _ in range(4))
     x_rec = torch.empty(n, T, n_channels)
 
     # Loop through data n times
-    for i, data in enumerate(data):
+    for i, (data, v) in enumerate(data):
         for j in range(n):
             # generate reconstruction and latent space over the x axis
-
             rec, loss, _mu, _logvar = model(data)
+            if v.dim() == 1:
+                v = v.unsqueeze(-1)
+                v = v.unsqueeze(-1)
 
-            # print(_mu.mean(-1).shape)
-            Z = model.reparametrization_trick(_mu, _logvar)
-            Z, _ = model.quantizer(Z)
+            _z = model.reparametrization_trick(_mu, _logvar)
+            _embed, _ = model.quantizer(_z)
+
             # Fill the Tensors with data Shape (mu, logvar,z): n*T*Latent_dim      x_rec = n*T*C
-            mu[j, i * batch_size: (i + 1) * batch_size, :]      = _mu.mean(-1)#.view(_mu.shape[0], -1)
-            logvar[j, i * batch_size: (i + 1) * batch_size, :]  = _logvar.mean(-1)#.view(_logvar.shape[0], -1)
-            z[j, i * batch_size: (i + 1) * batch_size, :]       = Z.mean(-1)#.view(Z.shape[0], -1)
-            x_rec[j, i * batch_size: (i + 1) * batch_size, :]   = rec
+            mu[j, i * batch_size: (i + 1) * batch_size, :]      = _mu#.view(_mu.shape[0], -1)
+            logvar[j, i * batch_size: (i + 1) * batch_size, :]  = _logvar#.view(_logvar.shape[0], -1)
+            z[j, i * batch_size: (i + 1) * batch_size, :]       = _z#.view(Z.shape[0], -1)
+            embed[j, i * batch_size: (i + 1) * batch_size, :] = _embed
+            x_rec[j, i * batch_size: (i + 1) * batch_size, :]   = (rec * v)[:, :, 0]
 
-        x[i * batch_size: (i + 1) * batch_size, :]              = data[:, :, 0] # Shape T*C
+        x[i * batch_size: (i + 1) * batch_size, :]              = (data*v)[:, :, 0] # Shape T*C
 
     # Calculate the mean for mu, logvar, z and x_rec
-    mu, logvar, z, x_rec_mean = (torch.mean(t, dim=0) for t in [mu, logvar, z, x_rec])
+    mu, logvar, z, embed, x_rec_mean = (torch.mean(t, dim=0) for t in [mu, logvar, z, embed, x_rec])
 
     # reshape and squeeze x_rec so that n and C are merged and final shape is T * (C*n)
     x_rec = torch.permute(x_rec, (1, 0, 2))
     x_rec = x_rec.reshape(T, -1)
 
     # convert to numpy, print shapes and output
-    x, mu, logvar, z, x_rec = (t.detach().numpy() for t in [x, mu, logvar, z, x_rec])
+    x, z, x_rec = (t.detach().numpy() for t in [x, z, x_rec])
     print("Tensors x: {}, mu: {}, logvar: {}, z: {}, x_rec: {}".format(x.shape, mu.shape, logvar.shape, z.shape, x_rec.shape))
-    return x, mu, logvar, z, x_rec, x_rec_mean
+    return x, mu, logvar, z, embed, x_rec, x_rec_mean
 
 # @torch.no_grad()
 # def sample_from_z_VQ(model, mu, logvar, n, slider_idx, slider_val, VQ=True):  #
@@ -311,93 +324,214 @@ def sample_from_data_VQ(model, data, n):
 #     return REC.numpy(), REC_mean.numpy(), Z.numpy()
 
 @torch.no_grad()
-def sample_from_quantizer_VQ(model, data, n):
+def sample_from_quantizer_VQ(model, data, mu, logvar, n, codebook):
     # Get necessary variables for the init
     # latent_dims = latent_dims
 
-    n_channels = data.dataset.data.shape[0]
-    latent_dims = n_channels *2
-    T = data.dataset.data.shape[1] - data.dataset.L
+    # Get the model parameters
+    n_channels = model._n_channels
+    latent_dims = model._latent_dims
+    num_embed = model.quantizer._num_embed
+    dim_embed = model.quantizer._dim_embed
+    code_book = model.quantizer._embedding
+    L = model._L
+    # mu = torch.FloatTensor(mu)
+    # logvar = torch.FloatTensor(logvar)
+
+    T = data.dataset.data.shape[1] - L
     batch_size = data.batch_size
 
     # Init tensors to store results
-    x = torch.empty((T, n_channels))
-    z = torch.empty((n, T, latent_dims))
+    # mu, logvar, z, embed = (torch.empty((n, T, n_channels * 2, latent_dims)) for _ in range(4))
+    # x_rec = torch.empty(n, T, n_channels)
+    # x = torch.empty((T, n_channels))
+    # z = torch.empty((n, T, latent_dims))
     x_rec = torch.empty(n, T, n_channels)
 
+    model.quantizer._embedding = codebook
     # Loop through data n times
-    for i, data in enumerate(data):
+    for i,(_mu, _logvar) in enumerate(zip(mu, logvar)):
         for j in range(n):
-            # generate reconstruction and latent space over the x axis
+            _z = model.reparametrization_trick(_mu, _logvar)
+            _embed, _ = model.quantizer(_z)
+            rec = model.decoder(_embed)
+            if v.dim() == 1:
+                v = v.unsqueeze(-1)
+                v = v.unsqueeze(-1)
 
-            rec, loss, _mu, _logvar = model(data)
-
-            # print(_mu.mean(-1).shape)
-            Z = model.reparametrization_trick(_mu, _logvar)
-            Z, _ = model.quantizer(Z)
-            # Fill the Tensors with data Shape (mu, logvar,z): n*T*Latent_dim      x_rec = n*T*C
-            # mu[j, i * batch_size: (i + 1) * batch_size, :]      = _mu.mean(-1)#.view(_mu.shape[0], -1)
-            # logvar[j, i * batch_size: (i + 1) * batch_size, :]  = _logvar.mean(-1)#.view(_logvar.shape[0], -1)
-            z[j, i * batch_size: (i + 1) * batch_size, :]       = Z.mean(-1)#.view(Z.shape[0], -1)
-            x_rec[j, i * batch_size: (i + 1) * batch_size, :]   = rec
-
-        # x[i * batch_size: (i + 1) * batch_size, :]              = data[:, :, 0] # Shape T*C
+            x_rec[j, i * batch_size: (i + 1) * batch_size, :] = (rec * v)[:, :, 0]
 
     # Calculate the mean for mu, logvar, z and x_rec
-    z, x_rec_mean = (torch.mean(t, dim=0) for t in [z, x_rec])
+    x_rec_mean = torch.mean(x_rec, dim=0)
 
-    # reshape and squeeze x_rec so that n and C are merged and final shape is T * (C*n)
-    x_rec = torch.permute(x_rec, (1, 0, 2))
-    x_rec = x_rec.reshape(T, -1)
+    return x_rec, x_rec_mean
 
-    # convert to numpy, print shapes and output
-    z, x_rec = (t.detach().numpy() for t in [z, x_rec])
-    print("Tensors z: {}, x_rec: {}".format(z.shape, x_rec.shape))
-    return z, x_rec, x_rec_mean
+    # for channel, line in enumerate(rec_lines[0]):
+    #     line.set_ydata(x_rec[:, channel])
+    # for channel, line in enumerate(rec_lines[1]):
+    #     line.set_ydata(x_rec_mean[:, channel])
+
+
+
+    # for i, (data, v) in enumerate(data):
+    #     for j in range(n):
+    #         # generate reconstruction and latent space over the x axis
+    #
+    #         rec, loss, _mu, _logvar = model(data)
+    #
+    #         # print(_mu.mean(-1).shape)
+    #         Z = model.reparametrization_trick(_mu, _logvar)
+    #         Z, _ = model.quantizer(Z)
+    #         # Fill the Tensors with data Shape (mu, logvar,z): n*T*Latent_dim      x_rec = n*T*C
+    #         # mu[j, i * batch_size: (i + 1) * batch_size, :]      = _mu.mean(-1)#.view(_mu.shape[0], -1)
+    #         # logvar[j, i * batch_size: (i + 1) * batch_size, :]  = _logvar.mean(-1)#.view(_logvar.shape[0], -1)
+    #         z[j, i * batch_size: (i + 1) * batch_size, :]       = Z.mean(-1)#.view(Z.shape[0], -1)
+    #         x_rec[j, i * batch_size: (i + 1) * batch_size, :]   = rec*v
+    #
+    #     # x[i * batch_size: (i + 1) * batch_size, :]              = data[:, :, 0] # Shape T*C
+    #
+    # # Calculate the mean for mu, logvar, z and x_rec
+    # z, x_rec_mean = (torch.mean(t, dim=0) for t in [z, x_rec])
+    #
+    # # reshape and squeeze x_rec so that n and C are merged and final shape is T * (C*n)
+    # x_rec = torch.permute(x_rec, (1, 0, 2))
+    # x_rec = x_rec.reshape(T, -1)
+    #
+    # # convert to numpy, print shapes and output
+    # z, x_rec = (t.detach().numpy() for t in [z, x_rec])
+    # print("Tensors z: {}, x_rec: {}".format(z.shape, x_rec.shape))
+    # return z, x_rec, x_rec_mean
 @torch.no_grad()
-def experiment_VQ(data, model, latent_dims):
+def experiment_VQ(data, model):
     # Init Slider and slider_axs lists
     sliders = []
     slider_axs = []
-    n_channels = data.dataset.data.shape[0]
+    text_boxes = []
+
+    # Get the model parameters
+    n_channels = model._n_channels
+    latent_dims = model._latent_dims
+    code_book = model.quantizer._embedding.weight
+
     # Sample x, x_rec and the latent space
-    x, mu, logvar, z, x_rec, x_rec_mean = sample_from_data_VQ(model, data, 100)
+    x, mu, logvar, z, embed, x_rec, x_rec_mean = sample_from_data_VQ(model, data, 3)
     print("x {}, x_rec {} ".format(x.shape, x_rec.shape))
 
     quantizers = model.quantizer._embedding.weight.detach().numpy()
     print(quantizers.shape)
     # Create a figure and axis object
+    gs = GridSpec(2, 2)
     fig = plt.figure()
-    ax1 = plt.subplot2grid((3, 2), (0, 0), colspan=2)
-    ax2 = plt.subplot2grid((3, 2), (1, 0), colspan=2)
-    axs = [ax1, ax2]
+    # ax1 = plt.subplot2grid((latent_dims + 1, n_channels + 1), (0, 0), colspan=n_channels + 1)
+    # # ax2 = plt.subplot2grid((3, 2), (1, 0), colspan=2)
+    # ax3 = plt.subplot2grid((2, 2), (2, 1), rowspan= latent_dims, colspan=1)
+    # ax4 = plt.subplot2grid((2, 2), (2, 0), colspan=1)
+    # axs = [ax1, ax3, ax4]
+
+    ax_plot = fig.add_subplot(gs[0, :])
+    data_lines = ax_plot.plot(x, "b")
+    rec_lines = ax_plot.plot(x_rec, "orange", alpha = 0.2)
+    rec_lines_mean = ax_plot.plot(x_rec_mean, "r")
+
+    ax_plot.set_title('Reconstruction')
 
     # Plot the initial data
-    data_lines = ax1.plot(x, "b")
-    rec_lines = ax1.plot(x_rec, "orange", alpha = 0.2)
-    rec_lines_mean = ax1.plot(x_rec_mean, "r")
-    z_lines = ax2.plot(z, "g")
+    # data_lines = ax1.plot(x, "b")
+    # rec_lines = ax1.plot(x_rec, "orange", alpha = 0.2)
+    # rec_lines_mean = ax1.plot(x_rec_mean, "r")
+    # rec_lines_ = [rec_lines, rec_lines_mean]
+    # z_lines = ax2.plot(z, "g")
     # quantizers = ax2.plot()
+    # create the heat map on the bottom right
+    ax_heatmap = fig.add_subplot(gs[1, 1])
+    code_book_widget = ax_heatmap.imshow(code_book)
+    ax_heatmap.set_title('Codebook Heatmap')
+    # code_book_widget = ax3.imshow(code_book)
 
-    # Add a slider widget for each z
-    for i in range(latent_dims):
-        for j in range(n_channels):
-            # If statement to place the sliders on the left and right, for the layout
-            if i < latent_dims*n_channels / 2:
-                slider_axs.append(plt.axes([0.1, (0.3 - 0.02 * i), 0.35, 0.03]))
-            else:
-                slider_axs.append(plt.axes([0.5, (0.3 - 0.02 * (i - latent_dims / 2)), 0.35, 0.03]))
+    # create the grid of text inputs on the bottom left
+    ax_inputs = fig.add_subplot(gs[1, 0])
+    gs_inputs = gs[1, 0].subgridspec(2, 2)
 
-        # populate the sliders list
-        sliders.append(Slider(slider_axs[i], r'$Ch_{{{}}} Z_{{{}}}$'.format(j, i), -100, 100, valinit=quantizers[i, j]))
+    for i in range(2):
+        for j in range(2):
+            ax_input = fig.add_subplot(gs_inputs[i, j])
+            text_boxes.append(TextBox(ax_input, f'', initial=r'{:.3f}'.format(code_book[i, j]), textalignment="center"))
+    ax_inputs.set_title('CodeBook Values')
+
+    # # create the grid of text inputs on the bottom left
+    # ax_inputs = fig.add_subplot(gs[1, 0])
+    # input_grid = np.zeros((latent_dims, n_channels), dtype=object)
+    # gs_inputs = gs[1, 0].subgridspec(latent_dims, n_channels)
+    # # ax4.
+    # # ax4.plot(gs[:,:])
+    #
+    # for i in range(latent_dims):
+    #     for j in range(n_channels):
+    #         ax_input = fig.add_subplot(gs_inputs[i, j])
+    #
+    #         input_grid[i, j] = TextBox(ax_inputs, f'Input ({i + 1},{j + 1})', initial=r'{}'.format(code_book[i, j]))
+    #         # input_grid[i, j].on_submit(lambda val: print(f'({i + 1},{j + 1}): {val}'))
+    # ax_inputs.set_title('CodeBook Values')
+
+            # text_box = TextBox(gs[i, j], 'df', initial= r'{}'.format(code_book[i, j]))
+            # text_boxes.append(text_box)
+
+    # set the layout parameters for the TextBox widgets
+    # for text_box in text_boxes:
+    #     text_box.label.set_size(5)
+    #     text_box.text_disp.set_size(5)
+
+    # # Add a slider widget for each entry in the codebook
+    # row_step = 0.4/n_channels + 0.1
+    # col_step = 0.4/latent_dims +0.1
+    # width = 0.2 /n_channels
+    # height = 0.5/latent_dims
+    # for i in range(latent_dims):
+    #     for j in range(n_channels):
+    #         # place the sliders on the left and right, for the layout  [left, bottom, width, height]
+    #         slider_axs.append(plt.axes([col_step * j, row_step * i, width, height]))
+    #         k = i*n_channels + j
+    #
+    #         # populate the sliders list
+    #         sliders.append(TextBox(slider_axs[k], label=r'', initial= r'{}'.format(code_book[i, j]) ))
+    #         # sliders.append(Slider(slider_axs[k], r'$Ch_{{{}}} Z_{{{}}}$'.format(j, i), -100, 100, valinit=code_book[i, j]))
 
     # define initial values
-    init_vals = [slider.valinit for slider in sliders]
+    # init_vals = [slider.valinit for slider in sliders]
 
-    def update(val, idx, mu, logvar, z, sliders):
-        # save z and sample new rec and rec_mean
-        temp = np.copy(z)
-        # n_channels = x.shape[1]
+    # def update(val, idx, mu, logvar, z, sliders):
+    #     # # save z and sample new rec and rec_mean
+    #     # temp = np.copy(z)
+    #     # # n_channels = x.shape[1]
+    #     # get the indices of the changed value in quantizers
+    #     quantizers = model.quantizer._embedding.weight
+    #     latent_dims, n_channels = quantizers.shape[0], quantizers.shape[1]
+    #     latent = idx % latent_dims
+    #     channel = idx // latent_dims
+    #
+    #     # Apply the change
+    #     quantizers[latent, channel] = torch.tensor(float(val), dtype=torch.float)
+    #     # rec, rec_mean, Z = sample_from_z_VQ(model, mu, logvar, 100, idx, val)
+    #     rec, rec_mean = sample_from_quantizer_VQ(model, data, mu, logvar, 3, quantizers)
+    #     # redraw rec, rec_mean and z
+    #     for channel, line in enumerate(rec_lines):
+    #         line.set_ydata(rec[:, channel])
+    #     for channel, line in enumerate(rec_lines_mean):
+    #         line.set_ydata(rec_mean[:, channel])
+    #
+    #     # Reset Sliders to initial values
+    #     # for i, slider in enumerate(sliders):
+    #     #     if slider.val != init_vals[i] and idx != i:
+    #     #         slider.reset()
+    #
+    #     fig.canvas.draw_idle()
+    #     plt.grid(True)
+
+
+    def update(val, idx):
+        # # save z and sample new rec and rec_mean
+        # temp = np.copy(z)
+        # # n_channels = x.shape[1]
         # get the indices of the changed value in quantizers
         quantizers = model.quantizer._embedding.weight
         latent_dims, n_channels = quantizers.shape[0], quantizers.shape[1]
@@ -405,35 +539,175 @@ def experiment_VQ(data, model, latent_dims):
         channel = idx // latent_dims
 
         # Apply the change
-        quantizers[latent, channel] = torch.tensor(val, dtype=torch.float)
+        quantizers[latent, channel] = torch.tensor(float(val), dtype=torch.float)
         # rec, rec_mean, Z = sample_from_z_VQ(model, mu, logvar, 100, idx, val)
-        z, rec, rec_mean = sample_from_quantizer_VQ(model, data, 100)
+        rec, rec_mean = sample_from_quantizer_VQ(model, data, mu, logvar, 3, quantizers)
         # redraw rec, rec_mean and z
         for channel, line in enumerate(rec_lines):
             line.set_ydata(rec[:, channel])
         for channel, line in enumerate(rec_lines_mean):
             line.set_ydata(rec_mean[:, channel])
-        for channel, line in enumerate(z_lines):
-            line.set_ydata(z[:, channel])
 
-        # Reset Sliders to initial values
-        for i, slider in enumerate(sliders):
-            if slider.val != init_vals[i] and idx != i:
-                slider.reset()
+        # fig.canvas.draw_idle()
+        # plt.grid(True)
 
-        fig.canvas.draw_idle()
-        plt.grid(True)
-    def save(text):
+    # create the grid of text inputs on the bottom left
+    ax_inputs = fig.add_subplot(gs[1, 0])
+    gs_inputs = gs[1, 0].subgridspec(2, 2)
 
-        print(text)
-        torch.save(model, r'modules\{}.pt'.format(text))
 
-    text_ax = plt.axes([0.5, 0.01, 0.35, 0.05])
-    text_box = TextBox(text_ax,'Save as: ', initial="beta_vae3")
+    for i in range(2):
+        for j in range(2):
+            ax_input = fig.add_subplot(gs_inputs[i, j])
+
+            text_boxes.append(TextBox(ax_input, f'', initial=r'{:.3f}'.format(code_book[i, j]), textalignment="center"))
+            # gs_inputs[i, j].on_submit(lambda  val, idx = i : update(val, idx))
+    for i, t in enumerate(text_boxes):
+        t.on_submit(lambda text, idx=i: update(text, idx))
+    # def save(text):
+    #     print(text)
+    #     torch.save(model, r'modules\{}.pt'.format(text))
+    #
+    # text_ax = plt.axes([0.5, 0.01, 0.35, 0.05])
+    # text_box = TextBox(text_ax,'Save as: ', initial="beta_vae3")
     # Connect the sliders to the update function
-    for i, slider in enumerate(sliders):
-        slider.on_changed(lambda val, idx=i: update(val, idx, mu, logvar, z, sliders))
-    text_box.on_submit(save)
+    # for i, slider in enumerate(sliders):
+    #     slider.on_submit(lambda  text, idx = i : update(text, idx))
+        # slider.on_submit(lambda text, idx=i: update(text, idx, mu, logvar, z, sliders))
+    # text_box.on_submit(save)
+    # for text_box in text_boxes:
+    #     text_box.ax = fig.add_subplot(gs[text_box.ax.rowNum, text_box.ax.colNum])
+    #     text_box.ax._frameon = False
+    #     text_box.draw_idle()
+    print('here again')
     # Show the plot
+    fig.tight_layout()
     plt.show()
-    plt.grid(True)
+    # plt.grid(True)
+
+
+
+def new_experiment_VQ(data, model):
+
+    # Init Slider and slider_axs lists
+    sliders = []
+    slider_axs = []
+
+    # Get the model parameters
+    n_channels = model._n_channels
+    latent_dims = model._latent_dims
+    num_embed = model.quantizer._num_embed
+    dim_embed = model.quantizer._dim_embed
+    code_book = model.quantizer._embedding.weight
+
+    # Sample x, x_rec and the latent space
+    x, mu, logvar, z, embed, x_rec, x_rec_mean = sample_from_data_VQ(model, data, 10)
+    print("x {}, x_rec {} ".format(x.shape, x_rec.shape))
+
+    def sample_from_quantizer_VQ(codebook):
+        # Get necessary variables for the init
+        # latent_dims = latent_dims
+        model.quantizer._embedding = codebook
+
+        # Get the model parameters
+        n_channels = model._n_channels
+        latent_dims = model._latent_dims
+        num_embed = model.quantizer._num_embed
+        dim_embed = model.quantizer._dim_embed
+        code_book = model.quantizer._embedding.weight
+        print(code_book.shape)
+
+        L = model._L
+
+        T = data.dataset.data.shape[1] - L
+        batch_size = data.batch_size
+
+        # Init tensors to store results
+        # mu, logvar, z, embed = (torch.empty((n, T, n_channels * 2, latent_dims)) for _ in range(4))
+        # x_rec = torch.empty(n, T, n_channels)
+        # x = torch.empty((T, n_channels))
+        # z = torch.empty((n, T, latent_dims))
+        x_rec = torch.empty(n, T, n_channels)
+
+
+        # Loop through data n times
+        for i, (_mu, _logvar) in enumerate(zip(mu, logvar)):
+            for j in range(n):
+                _z = model.reparametrization_trick(_mu, _logvar)
+                _embed, _ = model.quantizer(_z)
+                rec = model.decoder(_embed)
+                if v.dim() == 1:
+                    v = v.unsqueeze(-1)
+                    v = v.unsqueeze(-1)
+
+                x_rec[j, i * batch_size: (i + 1) * batch_size, :] = (rec * v)[:, :, 0]
+
+        # Calculate the mean for mu, logvar, z and x_rec
+        x_rec_mean = torch.mean(x_rec, dim=0)
+
+        for channel, line in enumerate(rec_lines[0]):
+            line.set_ydata(x_rec[:, channel])
+        for channel, line in enumerate(rec_lines[1]):
+            line.set_ydata(x_rec_mean[:, channel])
+
+        # for i, (data, v) in enumerate(data):
+        #     for j in range(n):
+        #         # generate reconstruction and latent space over the x axis
+        #
+        #         rec, loss, _mu, _logvar = model(data)
+        #
+        #         # print(_mu.mean(-1).shape)
+        #         Z = model.reparametrization_trick(_mu, _logvar)
+        #         Z, _ = model.quantizer(Z)
+        #         # Fill the Tensors with data Shape (mu, logvar,z): n*T*Latent_dim      x_rec = n*T*C
+        #         # mu[j, i * batch_size: (i + 1) * batch_size, :]      = _mu.mean(-1)#.view(_mu.shape[0], -1)
+        #         # logvar[j, i * batch_size: (i + 1) * batch_size, :]  = _logvar.mean(-1)#.view(_logvar.shape[0], -1)
+        #         z[j, i * batch_size: (i + 1) * batch_size, :]       = Z.mean(-1)#.view(Z.shape[0], -1)
+        #         x_rec[j, i * batch_size: (i + 1) * batch_size, :]   = rec*v
+        #
+        #     # x[i * batch_size: (i + 1) * batch_size, :]              = data[:, :, 0] # Shape T*C
+        #
+        # # Calculate the mean for mu, logvar, z and x_rec
+        # z, x_rec_mean = (torch.mean(t, dim=0) for t in [z, x_rec])
+        #
+        # # reshape and squeeze x_rec so that n and C are merged and final shape is T * (C*n)
+        # x_rec = torch.permute(x_rec, (1, 0, 2))
+        # x_rec = x_rec.reshape(T, -1)
+        #
+        # # convert to numpy, print shapes and output
+        # z, x_rec = (t.detach().numpy() for t in [z, x_rec])
+        # print("Tensors z: {}, x_rec: {}".format(z.shape, x_rec.shape))
+        # return z, x_rec, x_rec_mean
+
+    quantizers = model.quantizer._embedding.weight.detach().numpy()
+    print(quantizers.shape)
+    # Create a figure and axis object
+    fig = plt.figure()
+    ax1 = plt.subplot2grid((3, 2), (0, 0), colspan=2)
+    ax2 = plt.subplot2grid((3, 2), (1, 0), colspan=2)
+    ax3 = plt.subplot2grid((3, 2), (2, 1), colspan=1)
+    ax4 = plt.subplot2grid((3, 2), (2, 0), colspan=1)
+    axs = [ax1, ax2, ax3, ax4]
+
+    # Plot the initial data
+    data_lines = ax1.plot(x, "b")
+    rec_lines = ax1.plot(x_rec, "orange", alpha=0.2)
+    rec_lines_mean = ax1.plot(x_rec_mean, "r")
+    rec_lines_ = [rec_lines, rec_lines_mean]
+
+
+    # Create a list of TextInput widgets
+    text_inputs = [widgets.FloatText(value=code_book[j, i]) for i in range(n_channels) for j in range(latent_dims)]
+
+    for text_input in text_inputs:
+        display(text_input)
+    # Create a GridBox widget to arrange the text inputs in a grid
+    grid_box = widgets.GridBox(text_inputs,
+                               layout=widgets.Layout(grid_template_columns="repeat({}, 100px)".format(latent_dims),
+                                                     grid_template_rows="repeat({}, 30px)".format(n_channels)))
+    n = 10
+    out = widgets.interactive_output(sample_from_quantizer_VQ,
+                                     {'codebook': grid_box.children})
+
+    widgets.VBox([widgets.HBox([grid_box]), out])
+

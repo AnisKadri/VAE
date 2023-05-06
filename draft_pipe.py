@@ -143,9 +143,9 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 v = VariationalAutoencoder(input_size = n_channels,
                            num_layers = 3,
                            latent_dims= latent_dims,
-                           v_encoder = LongShort_TCVAE_Encoder, # MST_VAE_Encoder_Linear, #LongShort_TCVAE_Encoder,
-                           v_decoder = LongShort_TCVAE_Decoder, # MST_VAE_Decoder_Linear, #LongShort_TCVAE_Decoder,
-                           L=30,
+                           v_encoder = MST_VAE_Encoder_Linear, # MST_VAE_Encoder_Linear, #LongShort_TCVAE_Encoder,
+                           v_decoder = MST_VAE_Decoder_Linear, # MST_VAE_Decoder_Linear, #LongShort_TCVAE_Decoder,
+                           L=L,
                            slope = 0.2,
                            first_kernel = 15
                            )
@@ -203,7 +203,7 @@ test_data = DataLoader(slidingWindow(test_, L),
 
 for epoch in range(1, 100):
     train(v, train_data, criterion, opt, device, epoch, VQ=False)
-torch.save(v, r'modules\beta_vae_5channels.pt')
+torch.save(v, r'modules\mst_vae_lin2.pt')
 # test(v, test_data, criterion, device)
 
 
