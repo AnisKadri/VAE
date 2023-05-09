@@ -132,7 +132,7 @@ class VQ_Quantizer(nn.Module):
 
     def forward(self, x):
         # x : BCL -> BLC
-        #         print(x.shape)
+        # print(x.shape)
         x = x.permute(0, 2, 1).contiguous()
         x_shape = x.shape
 
@@ -367,13 +367,14 @@ class slidingWindow(Dataset):
         if self.data.shape[1] - index >= self.L:
             x = self.data[:, index:index + self.L]
             v = torch.sum(x / self.L, axis=1).unsqueeze(1)
-            #             print(x.shape)
-            #             print(v.unsqueeze(1).shape)
             x = x / v
             return (x, v)
 
     def __len__(self):
-        return self.data.shape[1] - self.L
+        if self.data.dim() == 2:
+            return self.data.shape[1] - self.L
+        else:
+            return self.data.shape[0] - self.L
 
 
 ### Cost function

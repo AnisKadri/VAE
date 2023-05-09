@@ -57,8 +57,8 @@ test_data = DataLoader(slidingWindow(test_, L),
 # v.cpu()
 print(v.parameters)
 print('here')
-# compare(train_data, v, VQ=True)
+compare(train_data, v, VQ=True)
 
 # experiment(train_data, v, latent_dims)
 # new_experiment_VQ(test_data, v)
-experiment_VQ(train_data, v)
+# experiment_VQ(train_data, v)

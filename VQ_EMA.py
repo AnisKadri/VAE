@@ -2,7 +2,8 @@
 # coding: utf-8
 
 # In[11]:
-
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 # get_ipython().run_line_magic('load_ext', 'autoreload')
 # get_ipython().run_line_magic('autoreload', '2')
@@ -34,7 +35,7 @@ import pprint
 periode = 15 #days
 step = 5 # mess interval in minutes
 val = 500
-n_channels = 18
+n_channels = 3
 effects = {
     "Pulse": {
         "occurances":0,
@@ -501,7 +502,7 @@ def train(model, train_loader, criterion, optimizer, device, epoch, VQ = True):
 
 
 ### Init Model
-latent_dims = 17 # 6 # 17
+latent_dims = 3 # 6 # 17
 L= 32# 39 #32
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -574,8 +575,8 @@ test_data = DataLoader(slidingWindow(test_, L),
 for epoch in range(1, 50):
     train(v, train_data, criterion, opt, device, epoch, VQ = True)
 
-torch.save(x, r'modules\data_18channels.pt')
-torch.save(v, r'modules\vq_ema.pt')
+torch.save(x, r'modules\data_3channels_3latent.pt')
+torch.save(v, r'modules\vq_ema_3channels_3latent.pt')
 # In[19]:
 
 
