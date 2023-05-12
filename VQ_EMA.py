@@ -577,6 +577,7 @@ for epoch in range(1, 50):
     train(v, train_data, criterion, opt, device, epoch, VQ = True)
 
 torch.save(x, r'modules\data_{}channels_{}latent.pt'.format(n_channels,latent_dims))
+torch.save(params, r'modules\params_{}channels_{}latent.pt'.format(n_channels,latent_dims))
 torch.save(v, r'modules\vq_ema_{}channels_{}latent.pt'.format(n_channels,latent_dims))
 # In[19]:
 

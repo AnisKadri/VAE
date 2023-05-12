@@ -13,13 +13,14 @@ from VQ_EMA_fn import *
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.widgets import Cursor
 from copy import deepcopy
+from sklearn.metrics import mutual_info_score
 
 class VQ_gui(tk.Tk):
   @torch.no_grad()
-  def __init__(self, model, data, repetition):
+  def __init__(self, model, data, params, repetition):
     super().__init__()
     # Init variable vor the Gui
-    self.model, self.data, self.repetition = model, data, repetition
+    self.model, self.data, self.params, self.repetition = model, data, params, repetition
     self.model.eval()
     self.spinboxs, self.double_vars = [], []
     self.norm_vec_filled = False
@@ -35,8 +36,15 @@ class VQ_gui(tk.Tk):
     self.code_book_np   = self.code_book.detach().numpy()
     self.changed = []
 
+    # Get data parameters
+    self.mean = params["mu"].squeeze()[:self.T]
+    self.cov = params["cov"].squeeze()[:self.T]
+
     # Sample x, x_rec and the latent space
     self.x, self.mu, self.logvar, self.z, self.embed, self.x_rec, self.x_rec_mean, self.norm_vec = self.sample_from_data_VQ(model, data, repetition)
+    print("embed shape", self.embed.shape)
+
+    self.MI_scores = self.calculate_MI_score(self.mean)
 
     # create a DataLoader from mu and logvar for later generation
     self.mu_loader = DataLoader(self.mu, #slidingWindow(self.mu, self.L),
@@ -49,7 +57,7 @@ class VQ_gui(tk.Tk):
                                )
 
     # create window and frames layout
-    button_frame, grid_frame, heatmap_frame, plot_frame = self.create_frames()
+    button_frame, grid_frame, heatmap_frame, plot_frame, scatter_frame = self.create_frames()
 
     # Create the text input widgets
     self.create_spinboxes(grid_frame)
@@ -63,6 +71,11 @@ class VQ_gui(tk.Tk):
     # create heatmap
     self.ax_heatmap, self.heatmap, self.heatmap_canvas = self.create_heatmap(heatmap_frame)
 
+    # create scatterogram
+    self.ax_scatter, self.scatter, self.scatter_canvas = self.create_scatter(scatter_frame)
+
+
+
 
   def create_heatmap(self, heatmap_frame):
     fig = Figure(figsize=(5, 4), dpi=100)
@@ -75,9 +88,12 @@ class VQ_gui(tk.Tk):
     return ax_heatmap, heatmap, heatmap_canvas
 
   def create_plot(self, plot_frame):
-    fig = Figure(figsize=(16, 4), dpi=100)
+    fig = Figure(figsize=(10,4), dpi=100)
     ax_plot = fig.add_subplot(111)
     rec_lines, rec_lines_mean = self.plot_reconstruction(ax_plot, self.x, self.x_rec, self.x_rec_mean)
+    ax_plot.set_xlabel('Time')
+    ax_plot.set_ylabel('Values')
+
     plot_canvas = FigureCanvasTkAgg(fig, master=plot_frame)
     plot_canvas.draw()
     plot_canvas.get_tk_widget().pack(fill="both", expand=True)
@@ -96,21 +112,55 @@ class VQ_gui(tk.Tk):
 
     return ax_plot, rec_lines, rec_lines_mean, plot_canvas
 
+  def create_scatter(self, scatter_frame):
+    fig = Figure(figsize=(6,4), dpi=100)
+    ax_scatter = fig.add_subplot(111)
+    flattend = self.MI_scores.flatten()
+    n = flattend.size(0)
+
+    # Set the x-axis to the indices of arr
+    indices = np.arange(n)
+
+    print(n)
+    print(flattend)
+    scatter = ax_scatter.scatter(indices, flattend)
+    ax_scatter.set_xlabel('Embedding Vec')
+    ax_scatter.set_ylabel('MI Score')
+    ax_scatter.set_title("MI Score of Embeding Vec and mean")
+
+    # Add interactivity
+    scatter_canvas = FigureCanvasTkAgg(fig, master=scatter_frame)
+    scatter_canvas.draw()
+    scatter_canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    # # create a Matplotlib navigation toolbar and add it to the Tkinter window
+    toolbar = NavigationToolbar2Tk(scatter_canvas, scatter_frame)
+    toolbar.update()
+
+    cursor = Cursor(ax_scatter, useblit=True, color='red', linewidth=1)
+
+    # bind the Matplotlib events to the Tkinter canvas
+    scatter_canvas.mpl_connect("motion_notify_event", toolbar._update_cursor)
+    scatter_canvas.mpl_connect("scroll_event", toolbar.zoom)
+    scatter_canvas.mpl_connect("key_press_event", toolbar.pan)
+    scatter_canvas.mpl_connect("key_release_event", toolbar.pan)
+
+    return ax_scatter, scatter, scatter_canvas
 
   def create_buttons(self, button_frame):
     # Reset Button
     self.reset_button = tk.Button(button_frame, text="Reset Values")
-    self.reset_button.pack(side="top", padx=20, pady=15, fill="x")
+    self.reset_button.pack(side="top", padx=5, pady=5, fill="x")
     self.reset_button.bind("<Button-1>", self.reset)
 
     # Save Button
     self.save_button = tk.Button(button_frame, text="Save Model")
-    self.save_button.pack(side="top", padx=20, pady=15, fill="x")
+    self.save_button.pack(side="top", padx=5, pady=5, fill="x")
     self.save_button.bind("<Button-1>", self.save)
 
     # File name for saving
     self.file_name = tk.Entry(button_frame)
-    self.file_name.pack(side="top", padx=20, pady=30, fill="x")
+    self.file_name.pack(side="top", padx=5, pady=5, fill="x")
 
   def create_spinboxes(self, grid_frame):
     for row in range(self.latent_dims):
@@ -145,9 +195,12 @@ class VQ_gui(tk.Tk):
     plot_frame = tk.Frame(parent_frame)
     plot_frame.grid(row=0, column=0, sticky="nsew")
 
+    scatter_frame = tk.Frame(parent_frame)
+    scatter_frame.grid(row=0, column=1, sticky="nsew")
+
     # create buttons frame
     button_frame = tk.Frame(parent_frame)
-    button_frame.grid(row=0, column=1, sticky="nsew")
+    button_frame.grid(row=0, column=5, sticky="nsew")
 
     # create bottom frame for inputs and heatmap
     bottom_frame = tk.Frame(self)
@@ -163,7 +216,7 @@ class VQ_gui(tk.Tk):
     grid_frame = tk.Frame(bottom_frame, padx=10, pady=10)
     grid_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=1)
 
-    return button_frame, grid_frame, heatmap_frame, plot_frame
+    return button_frame, grid_frame, heatmap_frame, plot_frame, scatter_frame
 
   def plot_heatmap(self, ax_heatmap, codebook):
     ax_heatmap.clear()
@@ -204,7 +257,7 @@ class VQ_gui(tk.Tk):
     # Reset Spinboxes values
     for row in range(self.latent_dims):
       for col in range(self.num_embed):
-        value = self.code_book[row][col]
+        value = self.code_book[row][col].detach().numpy()
         idx = row * self.num_embed + col
         self.double_vars[idx].set(value)
 
@@ -323,12 +376,46 @@ class VQ_gui(tk.Tk):
 
     return x, mu, logvar, z, embed, x_rec, x_rec_mean, norm_vec
 
+  @torch.no_grad()
+  def calculate_MI_score(self, var):
+    MI_scores = torch.empty((self.num_embed, self.latent_dims))
+
+    for row in range(self.num_embed):
+      for col in range(self.latent_dims):
+        # Calculate mutual Info
+        embed_vec = self.embed[:, row, col].numpy()
+        mutual_info = mutual_info_score(var, embed_vec, contingency=None)
+
+        # fill the MI_scores Tensor
+        MI_scores[row, col] = torch.tensor(mutual_info)
+
+    print(MI_scores)
+
+    # print(var.shape)
+    # reshaped_embed = self.embed.view(var.shape[0], -1).T.detach().numpy()
+    # print("reshaped Embedding", reshaped_embed.shape)
+    #
+    # # Broadcast the input var to match the shape of the embedding
+    # broadcast_shape = (reshaped_embed.shape[0], reshaped_embed.shape[1])
+    # var_broadcasted = np.broadcast_to(var, broadcast_shape)
+    # print("var_broadcasted", var_broadcasted.shape)
+    # mutual_info = mutual_info_score(var, reshaped_embed, contingency=None)
+
+    return MI_scores
+
+
+
 if __name__ == "__main__":
-  #r'modules\data_{}channels_{}latent.pt'
-  x = torch.load(r'modules\data_1channels_6latent.pt')
+  n_channels = 1
+  latent_dims = 6
+  x = torch.load(r'modules\data_{}channels_{}latent.pt'.format(n_channels,latent_dims))
   x = torch.FloatTensor(x)
 
-  v = torch.load(r'modules\vq_ema_1channels_6latent.pt')
+  params = torch.load(r'modules\params_{}channels_{}latent.pt'.format(n_channels,latent_dims))
+  # params = torch.FloatTensor(params)
+  print(params)
+
+  v = torch.load(r'modules\vq_ema_{}channels_{}latent.pt'.format(n_channels,latent_dims))
   print(v)
   L = v._L
   latent_dims = v._latent_dims
@@ -338,7 +425,6 @@ if __name__ == "__main__":
   train_ = x[:, :int(0.8 * n)]
   val_ = x[:, int(0.8 * n):int(0.9 * n)]
   test_ = x[:, int(0.9 * n):]
-  print(train_.shape)
   train_data = DataLoader(slidingWindow(train_, L),
                           batch_size=batch_size,
                           shuffle=False
@@ -352,6 +438,6 @@ if __name__ == "__main__":
                          shuffle=False
                          )
 
-  app = VQ_gui(v, train_data, 10)
+  app = VQ_gui(v, train_data, params, repetition=1)
 
   app.mainloop()
