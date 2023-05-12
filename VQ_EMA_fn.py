@@ -72,19 +72,85 @@ class TCVAE_Encoder(nn.Module):
     def forward(self, x):
         ### CNN
         for i, cnn in enumerate(self.cnn_layers):
-            #             print("Encoder Cnn", x.shape)
+            print("Encoder Cnn", x.shape)
             x = cnn(x)
         cnn_shape = x.shape
         x = x.view(x.size(0), -1)
-        #         print("Encoder reshape after Cnn ", x.shape)
+        print("Encoder reshape after Cnn ", x.shape)
         ### MLP
         mu = self.encoder_mu(x)
         logvar = self.encoder_logvar(x)
-        #         print("Encoder mu after lin ", mu.shape)
+        print("Encoder mu after lin ", mu.shape)
         mu = mu.view(mu.shape[0], self.n_channels, -1)
         logvar = logvar.view(logvar.shape[0], self.n_channels, -1)
-        #         print("Encoder mu after reshape ", mu.shape)
-        #         mu.reshape
+        print("Encoder mu after reshape ", mu.shape)
+        print("Calculated n", self.n)
+                # mu.reshape
+
+        return mu, logvar
+
+class TCVAE_Encoder_modified(nn.Module):
+    def __init__(self, input_size, num_layers, latent_dims, L=30, slope=0.2, first_kernel=None):
+        super(TCVAE_Encoder_modified, self).__init__()
+
+        self.n = lin_size(L, num_layers, first_kernel)
+        self.cnn_layers = nn.ModuleList()
+        self.n_channels = input_size
+        self.L = L
+        self.num_layers = num_layers
+        self.cnn_output = self.n // (2 * self.num_layers)
+        self.latent_dims = latent_dims
+
+        def init_weights(m):
+            if isinstance(m, nn.Conv1d):
+                torch.nn.init.kaiming_uniform_(m.weight, mode="fan_in", nonlinearity="leaky_relu")
+                m.bias.data.fill_(0.01)
+
+        # CNN Layers that double the channels each time
+        for i in range(0, num_layers):
+            if i == 0:
+                if first_kernel == None: first_kernel = 2
+                self.cnn_layers.append(
+                    nn.Conv1d(input_size, input_size * 2, kernel_size=first_kernel, stride=2, padding=0))
+                self.cnn_layers.append(nn.LeakyReLU(slope, True))
+                self.cnn_layers.append(nn.BatchNorm1d(input_size * 2))
+            else:
+                self.cnn_layers.append(
+                    nn.Conv1d(input_size * 2 * i, input_size * 2 * (i + 1), kernel_size=2, stride=2, padding=0))
+                self.cnn_layers.append(nn.LeakyReLU(slope, True))
+                self.cnn_layers.append(nn.BatchNorm1d(input_size * 2 * (i + 1)))
+
+        # MLP Layers for Mu and logvar output
+        self.encoder_mu = nn.Sequential(
+            nn.Linear(self.cnn_output, self.latent_dims),
+            #             nn.Linear(self.n * input_size, self.n * input_size),
+            #             nn.ReLU(True)
+        )
+        self.encoder_logvar = nn.Sequential(
+            nn.Linear(self.cnn_output, self.latent_dims),
+            #             nn.Linear(self.n * input_size, self.n * input_size),
+            #             nn.ReLU(True)
+        )
+
+        # Init CNN
+        self.cnn_layers.apply(init_weights)
+
+    def forward(self, x):
+        ### CNN
+        for i, cnn in enumerate(self.cnn_layers):
+            # print("Encoder Cnn", x.shape)
+            x = cnn(x)
+        cnn_shape = x.shape
+        # x = x.view(x.size(0), -1)
+        # print("Encoder reshape after Cnn ", x.shape)
+        # ### MLP
+        mu = self.encoder_mu(x)
+        logvar = self.encoder_logvar(x)
+        # print("Encoder mu after lin ", mu.shape)
+        # mu = mu.view(mu.shape[0], self.n_channels, -1)
+        # logvar = logvar.view(logvar.shape[0], self.n_channels, -1)
+        # print("Encoder mu after reshape ", mu.shape)
+                # mu.reshape
 
         return mu, logvar
 
@@ -94,8 +160,8 @@ class LongShort_TCVAE_Encoder(nn.Module):
         super(LongShort_TCVAE_Encoder, self).__init__()
         self.latent_dims = latent_dims
 
-        self.short_encoder = TCVAE_Encoder(input_size, num_layers, latent_dims, L, slope, first_kernel=None)
-        self.long_encoder = TCVAE_Encoder(input_size, num_layers, latent_dims, L, slope, first_kernel)
+        self.short_encoder = TCVAE_Encoder_modified(input_size, num_layers, latent_dims, L, slope, first_kernel=None)
+        self.long_encoder = TCVAE_Encoder_modified(input_size, num_layers, latent_dims, L, slope, first_kernel)
 
     def forward(self, x):
         short_mu, short_logvar = self.short_encoder(x)
@@ -215,12 +281,13 @@ class VQ_MST_VAE(nn.Module):
         self._slope = slope
         self._first_kernel = first_kernel
         self._commit_loss = commit_loss
+        self._num_embed = 4 * self._num_layers * self._n_channels
 
         self.encoder = self._v_encoder(self._n_channels, self._num_layers, self._latent_dims, self._L, self._slope,
                                        self._first_kernel)
         self.decoder = self._v_decoder(self._n_channels, self._num_layers, self._latent_dims, self._L, self._slope,
                                        self._first_kernel)
-        self.quantizer = self._v_quantizer(self._latent_dims, self._n_channels, self._commit_loss, decay=0.99,
+        self.quantizer = self._v_quantizer(self._latent_dims, self._num_embed, self._commit_loss, decay=0.99,
                                            epsilon=1e-5)
 
     def reparametrization_trick(self, mu, logvar):
@@ -241,16 +308,16 @@ class VQ_MST_VAE(nn.Module):
         x_rec = self.decoder(e)
         loss_rec = F.mse_loss(x_rec, x, reduction='sum')
         loss = loss_rec + loss_quantize
-        #         print("----------------Encoder Output-------------")
-        #         print("mu and logvar", mu.shape, logvar.shape)
-        #         print("----------------Reparametrization-------------")
-        #         print("Z", z.shape)
-        #         print("----------------Quantizer-------------")
-        #         print("quantized shape", e.shape)
-        #         print("loss shape", loss_quantize)
-        #         print("----------------Decoding-------------")
+        # print("----------------Encoder Output-------------")
+        # print("mu and logvar", mu.shape, logvar.shape)
+        # print("----------------Reparametrization-------------")
+        # print("Z", z.shape)
+        # print("----------------Quantizer-------------")
+        # print("quantized shape", e.shape)
+        # print("loss shape", loss_quantize)
+        # print("----------------Decoding-------------")
         # print("----------------Decoder Output-------------")
-        #         print("mu and logvar Decoder", mu_dec.shape, logvar_dec.shape)
+        # # print("mu and logvar Decoder", mu_dec.shape, logvar_dec.shape)
         # print("rec shape", x_rec.shape)
         return x_rec, loss, mu, logvar
 
@@ -334,13 +401,91 @@ class TCVAE_Decoder(nn.Module):
 
         return x  # x[:,:,0]
 
+class TCVAE_Decoder_modified(nn.Module):
+    def __init__(self, input_size, num_layers, latent_dims, L=30, slope=0.2, first_kernel=None):
+        super(TCVAE_Decoder_modified, self).__init__()
+
+        def init_weights(m):
+            if isinstance(m, nn.Conv1d):
+                torch.nn.init.kaiming_uniform_(m.weight, mode="fan_in", nonlinearity="leaky_relu")
+                m.bias.data.fill_(0.01)
+
+        self.n_channels = input_size
+        self.latent_dims = latent_dims
+        self.first_kernel = first_kernel
+        self.num_layers = num_layers
+
+        self.n = lin_size(L, num_layers, first_kernel)
+
+        self.cnn_layers = nn.ModuleList()
+        self.cnn_input = self.n_channels * self.num_layers * 4
+
+        if self.first_kernel == None:
+            first_kernel = 2
+        else:
+            first_kernel = self.first_kernel
+        input_lin = self.latent_dims * 2 ** (self.num_layers - 1) + first_kernel - 2
+        #         print(input_lin)
+        self.decoder_lin = nn.Linear(input_lin, L)
+
+        #         # CNN Layers that double the channels each time
+        #         for i in range(num_layers, 0, -1):
+        #             if i == 1:
+        #                 if first_kernel == None: first_kernel = 2
+        #                 self.cnn_layers.append(nn.ConvTranspose1d(input_size * 2, input_size, kernel_size=2, stride=2, padding=0))
+        #                 self.cnn_layers.append(nn.LeakyReLU(slope, True))
+        #             else:
+        #                 self.cnn_layers.append(nn.ConvTranspose1d(input_size * 2 * i, input_size * 2 * (i-1), kernel_size=2, stride=2, padding=0))
+        #                 self.cnn_layers.append(nn.LeakyReLU(slope, True))
+        #                 self.cnn_layers.append(nn.BatchNorm1d(input_size * 2 * (i-1)))
+
+        # CNN Layers that double the channels each time
+        for i in range(0, num_layers):
+            if i == 0:
+                if first_kernel == None: first_kernel = 2
+                self.cnn_layers.append(
+                    nn.ConvTranspose1d(self.cnn_input, self.cnn_input // 2, kernel_size=2, stride=2, padding=0))
+                self.cnn_layers.append(nn.LeakyReLU(slope, True))
+                self.cnn_layers.append(nn.BatchNorm1d(self.cnn_input // 2))
+            elif i == num_layers - 1:
+                if first_kernel == None: first_kernel = 2
+                self.cnn_layers.append(
+                    nn.ConvTranspose1d(self.cnn_input // (2*i), self.cnn_input // (4*(i+1)), kernel_size=first_kernel, stride=2, padding=0))
+                self.cnn_layers.append(nn.LeakyReLU(slope, True))
+                self.cnn_layers.append(nn.BatchNorm1d(self.cnn_input // (4*(i+1))))
+            else:
+                self.cnn_layers.append(nn.ConvTranspose1d(self.cnn_input // (2*i), self.cnn_input // (2*(i+1)), kernel_size=2, stride=2, padding=0))
+                self.cnn_layers.append(nn.LeakyReLU(slope, True))
+                self.cnn_layers.append(nn.BatchNorm1d(self.cnn_input // (2*(i+1))))
+
+        # Init CNN
+        self.cnn_layers.apply(init_weights)
+
+    def forward(self, x):
+        #         print("Decoder Input ", z.shape)
+        #         x = x.view(x.shape[0], x.shape[1]* x.shape[2], -1)
+        #         print("Decoder Input reshaped ",x.shape)
+        #         x = self.decoder_lin(z)
+        #         print("Decoder Input after lin ",x.shape)
+        #         x = x.view(x.shape[0],x.shape[1],1)
+        #         print("Decoder Input reshaped again",x.shape)
+
+        for i, cnn in enumerate(self.cnn_layers):
+            # print("Decoder Cnn ", x.shape)
+            x = cnn(x)
+        # print("Decoder shape after Cnn, should be reshaped? ", x.shape)
+        x = self.decoder_lin(x)
+        # print("Decoder after lin ", x.shape)
+
+        return x  # x[:,:,0]
+
 
 class LongShort_TCVAE_Decoder(nn.Module):
     def __init__(self, input_size, num_layers, latent_dims, L=30, slope=0.2, first_kernel=None):
         super(LongShort_TCVAE_Decoder, self).__init__()
 
-        self.longshort_decoder = TCVAE_Decoder(input_size, num_layers, 2 * latent_dims, L, slope, first_kernel)
-        self.short_decoder = TCVAE_Decoder(input_size, num_layers, 2 * latent_dims, L, slope, first_kernel=None)
+        self.longshort_decoder = TCVAE_Decoder_modified(input_size, num_layers, 2 * latent_dims, L, slope, first_kernel)
+        self.short_decoder = TCVAE_Decoder_modified(input_size, num_layers, 2 * latent_dims, L, slope, first_kernel=None)
 
         self.reduction_layer = nn.Conv1d(2 * input_size, input_size, kernel_size=1, stride=1, padding=0)
 
