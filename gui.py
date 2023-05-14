@@ -14,6 +14,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.widgets import Cursor
 from copy import deepcopy
 from sklearn.metrics import mutual_info_score
+import warnings
+warnings.simplefilter("ignore", UserWarning)
 
 class VQ_gui(tk.Tk):
   @torch.no_grad()
@@ -72,7 +74,7 @@ class VQ_gui(tk.Tk):
     self.ax_heatmap, self.heatmap, self.heatmap_canvas = self.create_heatmap(heatmap_frame)
 
     # create scatterogram
-    self.ax_scatter, self.scatter, self.scatter_canvas = self.create_scatter(scatter_frame)
+    self.ax_scatter, self.scatter, self.scatter_canvas = self.create_scatter(scatter_frame, 10)
 
 
 
@@ -112,21 +114,23 @@ class VQ_gui(tk.Tk):
 
     return ax_plot, rec_lines, rec_lines_mean, plot_canvas
 
-  def create_scatter(self, scatter_frame):
+  def create_scatter(self, scatter_frame, k):
     fig = Figure(figsize=(6,4), dpi=100)
     ax_scatter = fig.add_subplot(111)
-    flattend = self.MI_scores.flatten()
-    n = flattend.size(0)
+    # flattend = self.MI_scores.flatten()
+    # n = flattend.size(0)
+    #
+    # # Set the x-axis to the indices of arr
+    # indices = np.arange(n)
+    #
+    # print(n)
+    # print(flattend)
+    # scatter = ax_scatter.scatter(indices, flattend)
+    # ax_scatter.set_xlabel('Embedding Vec')
+    # ax_scatter.set_ylabel('MI Score')
+    # ax_scatter.set_title("MI Score of Embeding Vec and mean")
 
-    # Set the x-axis to the indices of arr
-    indices = np.arange(n)
-
-    print(n)
-    print(flattend)
-    scatter = ax_scatter.scatter(indices, flattend)
-    ax_scatter.set_xlabel('Embedding Vec')
-    ax_scatter.set_ylabel('MI Score')
-    ax_scatter.set_title("MI Score of Embeding Vec and mean")
+    scatter = self.plot_MI_scores(ax_scatter, self.MI_scores, k)
 
     # Add interactivity
     scatter_canvas = FigureCanvasTkAgg(fig, master=scatter_frame)
@@ -144,6 +148,7 @@ class VQ_gui(tk.Tk):
     scatter_canvas.mpl_connect("scroll_event", toolbar.zoom)
     scatter_canvas.mpl_connect("key_press_event", toolbar.pan)
     scatter_canvas.mpl_connect("key_release_event", toolbar.pan)
+    fig.tight_layout()
 
     return ax_scatter, scatter, scatter_canvas
 
@@ -169,6 +174,7 @@ class VQ_gui(tk.Tk):
         # create the Spinbox and link it to the DoubleVar
         self.spinbox = Spinbox(grid_frame, from_=-50.0, to=50, textvariable=self.double_var,
                                command=lambda: self.sample_from_codebook(row, col))
+        # self.spinbox.bind('<Return>', self.set_spinbox_value(row, col))
         self.spinbox.grid(row=row, column=col, sticky="NSEW")
 
         # set initial value
@@ -225,6 +231,36 @@ class VQ_gui(tk.Tk):
 
     return heatmap
 
+  def plot_MI_scores(self, ax_scatter, MI_scores, k):
+    ax_scatter.clear()
+    # Get the indices and values of the top 10 elements across all dimensions
+    top_values, top_indices = torch.topk(MI_scores.view(-1), k=k, dim=0)
+
+    # Reshape the indices to match the shape of MI_scores and set them in tupples
+    top_indices = np.unravel_index(top_indices, MI_scores.shape)
+    top_indices = list(zip(top_indices[0], top_indices[1]))
+
+    for el in top_indices:
+      col, row = el[0], el[1]
+      idx = row * self.num_embed + col
+      self.spinboxs[idx].configure(background='yellow')
+
+    # define the x axis ticks
+    indices = np.arange(k)
+    xtick_labels = [str(t[::-1])for t in top_indices]
+
+    # Create the Scatterplot
+    scatter = ax_scatter.scatter(indices, top_values, c='y')
+
+    ax_scatter.set_xticks(indices)
+    ax_scatter.set_xticklabels(xtick_labels, rotation=45)
+    ax_scatter.set_xlabel('Embedding value: (Row, Col)')
+    ax_scatter.set_ylabel('MI Score')
+    ax_scatter.set_title("MI Score of Embedding   and mean")
+    ax_scatter.grid()
+
+    return scatter
+
   def plot_reconstruction(self, ax_plot, x, x_rec, x_rec_mean):
     ax_plot.clear()
     ax_plot.plot(x, "b")
@@ -235,6 +271,16 @@ class VQ_gui(tk.Tk):
 
     return rec_lines, rec_lines_mean
 
+  def set_spinbox_value(self, event, row, col):
+    try:
+      idx = row * self.num_embed + col
+      spin = self.spinboxs[idx]
+      value = int(spin.get())
+      spin.get().delete(0, tk.END)
+      spin.insert(0, value)
+      self.sample_from_codebook(row, col)
+    except ValueError:
+      pass
 
   def save(self, event):
     torch.save(self.model, r'modules\{}.pt'.format(self.file_name.get()))
@@ -379,6 +425,9 @@ class VQ_gui(tk.Tk):
   @torch.no_grad()
   def calculate_MI_score(self, var):
     MI_scores = torch.empty((self.num_embed, self.latent_dims))
+    print(self.num_embed)
+    print(self.latent_dims)
+    print(self.embed.shape)
 
     for row in range(self.num_embed):
       for col in range(self.latent_dims):
@@ -389,7 +438,7 @@ class VQ_gui(tk.Tk):
         # fill the MI_scores Tensor
         MI_scores[row, col] = torch.tensor(mutual_info)
 
-    print(MI_scores)
+    # print(MI_scores)
 
     # print(var.shape)
     # reshaped_embed = self.embed.view(var.shape[0], -1).T.detach().numpy()
@@ -408,14 +457,15 @@ class VQ_gui(tk.Tk):
 if __name__ == "__main__":
   n_channels = 1
   latent_dims = 6
-  x = torch.load(r'modules\data_{}channels_{}latent.pt'.format(n_channels,latent_dims))
+  L = 32
+  x = torch.load(r'modules\data_{}channels_{}latent_{}window.pt'.format(n_channels,latent_dims, L))
   x = torch.FloatTensor(x)
 
-  params = torch.load(r'modules\params_{}channels_{}latent.pt'.format(n_channels,latent_dims))
+  params = torch.load(r'modules\params_{}channels_{}latent_{}window.pt'.format(n_channels,latent_dims, L))
   # params = torch.FloatTensor(params)
   print(params)
 
-  v = torch.load(r'modules\vq_ema_{}channels_{}latent.pt'.format(n_channels,latent_dims))
+  v = torch.load(r'modules\vq_ema_{}channels_{}latent_{}window.pt'.format(n_channels,latent_dims, L))
   print(v)
   L = v._L
   latent_dims = v._latent_dims
