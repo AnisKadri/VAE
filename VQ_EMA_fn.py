@@ -163,6 +163,8 @@ class LongShort_TCVAE_Encoder(nn.Module):
         self.short_encoder = TCVAE_Encoder_modified(input_size, num_layers, latent_dims, L, slope, first_kernel=None)
         self.long_encoder = TCVAE_Encoder_modified(input_size, num_layers, latent_dims, L, slope, first_kernel)
 
+        self.reduction_layer = nn.Conv1d(2 *2 * input_size * num_layers, 2 * input_size * num_layers, kernel_size=1, stride=1, padding=0)
+
     def forward(self, x):
         short_mu, short_logvar = self.short_encoder(x)
         long_mu, long_logvar = self.long_encoder(x)
@@ -174,6 +176,9 @@ class LongShort_TCVAE_Encoder(nn.Module):
         # print("Long Encoder mu: ", long_mu.shape)
         #
         # print("After Cat: ", mu.shape)
+
+        mu_red = self.reduction_layer(mu)
+        logvar_red = self.reduction_layer(logvar)
 
         return mu, logvar
 
@@ -195,6 +200,7 @@ class VQ_Quantizer(nn.Module):
 
         self._decay = decay
         self._epsilon = epsilon
+        self._std = 0.5
 
     def forward(self, x):
         # x : BCL -> BLC
@@ -207,21 +213,27 @@ class VQ_Quantizer(nn.Module):
 
         # Calculate the distance to embeddings
 
-        #         print("the non squared x", x_flat.shape )
-        #         print("the non squared embed weights", self._embedding.weight.t().shape)
-        #         print("the x ", torch.sum(x_flat**2, dim = 1, keepdim = True).shape)
-        #         print("the embed ", torch.sum(self._embedding.weight**2, dim = 1).shape)
-        #         print("the matmul ", torch.matmul(x_flat, self._embedding.weight.t()).shape)
+        # print("the non squared x", x_flat.shape )
+        # print("the non squared embed weights", self._embedding.weight.t().shape)
+        # print("the x ", torch.sum(x_flat**2, dim = 1, keepdim = True).shape)
+        # print("the embed ", torch.sum(self._embedding.weight**2, dim = 1).shape)
+        # print("the matmul ", torch.matmul(x_flat, self._embedding.weight.t()).shape)
         dist = (torch.sum(x_flat ** 2, dim=1, keepdim=True)
                 + torch.sum(self._embedding.weight ** 2, dim=1)
                 - 2 * torch.matmul(x_flat, self._embedding.weight.t()))
         #         print(dist.shape)
 
         embed_indices = torch.argmin(dist, dim=1).unsqueeze(1)
-        #         print(embed_indices)
+        # print("embed indices",embed_indices)
+        noise = torch.randn(embed_indices.shape) * self._std
+        noise = torch.round(noise).to(torch.int32)
+        new_embed_indices = embed_indices + noise
+        new_embed_indices = torch.clamp(new_embed_indices, max=self._num_embed-1, min =0)
+        # print("noise ",noise.shape)
+        # print("both together",new_embed_indices)
         embed_Matrix = torch.zeros_like(dist)
         #         print(embed_Matrix.shape)
-        embed_Matrix.scatter_(1, embed_indices, 1)
+        embed_Matrix.scatter_(1, new_embed_indices, 1)
         #         print("Embedding ", embed_Matrix[:10,:])
 
         # get the corresponding e vectors

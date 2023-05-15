@@ -172,7 +172,7 @@ class VQ_gui(tk.Tk):
       for col in range(self.num_embed):
         self.double_var = tk.DoubleVar()
         # create the Spinbox and link it to the DoubleVar
-        self.spinbox = Spinbox(grid_frame, from_=-50.0, to=50, textvariable=self.double_var,
+        self.spinbox = Spinbox(grid_frame, from_=-50.0, to=50, increment=0.5, textvariable=self.double_var,
                                command=lambda: self.sample_from_codebook(row, col))
         # self.spinbox.bind('<Return>', self.set_spinbox_value(row, col))
         self.spinbox.grid(row=row, column=col, sticky="NSEW")
@@ -373,6 +373,7 @@ class VQ_gui(tk.Tk):
     x = torch.empty((self.T, self.num_embed))
     mu, logvar, z, embed = (torch.empty((self.repetition, self.T, self.num_embed , self.latent_dims)) for _ in range(4))
     x_rec = torch.empty(self.repetition, self.T, self.num_embed)
+    # print(x_rec.shape)
 
     # Init the normalisation vector and batch index
     norm_vec = []
@@ -387,11 +388,13 @@ class VQ_gui(tk.Tk):
         rec, loss, _mu, _logvar = model(batch)
         _z = model.reparametrization_trick(_mu, _logvar)
         _embed, _ = model.quantizer(_z)
-
+        # print(v.shape)
         # normalization
         if v.dim() == 1:
           v = v.unsqueeze(-1)
           v = v.unsqueeze(-1)
+        # print(v.shape)
+        # print(rec.shape)
 
         # Fill the Tensors with data Shape (mu, logvar,z): n*T*K*D, with K num of embeddings and D latent dims
         # x_rec = n*T*C
@@ -425,6 +428,7 @@ class VQ_gui(tk.Tk):
   @torch.no_grad()
   def calculate_MI_score(self, var):
     MI_scores = torch.empty((self.num_embed, self.latent_dims))
+    MI_scores_vec = torch.empty((self.latent_dims))
     print(self.num_embed)
     print(self.latent_dims)
     print(self.embed.shape)
@@ -437,6 +441,19 @@ class VQ_gui(tk.Tk):
 
         # fill the MI_scores Tensor
         MI_scores[row, col] = torch.tensor(mutual_info)
+
+    # print(self.embed.shape)
+    # print(self.latent_dims)
+    # for row in range(self.num_embed):
+    #     # Calculate mutual Info
+    #     embed_vec = self.embed[:, row, :].view(embed_vec.shape[0], -1).numpy()
+    #     new_var = np.expand_dims(var, 1)
+    #     print(embed_vec.shape)
+    #     print(new_var.shape)
+    #     mutual_info = mutual_info_score(embed_vec, var, contingency=None)
+    #
+    #     # fill the MI_scores Tensor
+    #     MI_scores_vec[col] = torch.tensor(mutual_info)
 
     # print(MI_scores)
 
@@ -456,8 +473,8 @@ class VQ_gui(tk.Tk):
 
 if __name__ == "__main__":
   n_channels = 1
-  latent_dims = 6
-  L = 32
+  latent_dims = 4
+  L = 60
   x = torch.load(r'modules\data_{}channels_{}latent_{}window.pt'.format(n_channels,latent_dims, L))
   x = torch.FloatTensor(x)
 

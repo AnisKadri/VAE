@@ -36,7 +36,7 @@ from VQ_EMA_fn import *
 periode = 15 #days
 step = 5 # mess interval in minutes
 val = 500
-n_channels = 1
+n_channels = 10
 effects = {
     "Pulse": {
         "occurances":0,
@@ -76,8 +76,8 @@ pprint.pprint(e_params)
 X.show()
 
 ### Init Model
-latent_dims = 6 # 6 # 17
-L= 32# 39 #32
+latent_dims = 4 # 6 # 17
+L= 30# 39 #32
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # v = vae(n_channels, L, latent_dims)
