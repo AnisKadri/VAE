@@ -36,7 +36,7 @@ from VQ_EMA_fn import *
 periode = 15 #days
 step = 5 # mess interval in minutes
 val = 500
-n_channels = 10
+n_channels = 1
 effects = {
     "Pulse": {
         "occurances":0,
@@ -44,12 +44,12 @@ effects = {
         "interval":40
         },
     "Trend": {
-        "occurances":2,
+        "occurances":1,
         "max_slope":0.005,
         "type":"linear"
         },
     "Seasonality": {
-        "occurances":3,
+        "occurances":0,
         "frequency_per_week":(7, 14), # min and max occurances per week
         "amplitude_range":(5, 20),
         },
@@ -69,15 +69,9 @@ effects = {
         }
     }
 
-X = Gen(periode, step, val, n_channels, effects)
-x, params, e_params = X.parameters()
-pprint.pprint(params)
-pprint.pprint(e_params)
-X.show()
-
 ### Init Model
-latent_dims = 4 # 6 # 17
-L= 30# 39 #32
+latent_dims = 6 # 6 # 17
+L= 60# 39 #32
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # v = vae(n_channels, L, latent_dims)
@@ -103,76 +97,79 @@ v = VQ_MST_VAE(n_channels = n_channels,
 
 v = v.to(device)
 opt = optim.Adam(v.parameters(), lr = 0.005043529186448577) # 0.005043529186448577 0.006819850049647945
-print(v)
-x = torch.FloatTensor(x)
 
+for i in range(100):
+    X = Gen(periode, step, val, n_channels, effects)
+    x, params, e_params = X.parameters()
+    pprint.pprint(params)
+    pprint.pprint(e_params)
+    # X.show()
+    x = torch.FloatTensor(x)
+    n = x.shape[1]
 
-n = x.shape[1]
+    train_ = x[:, :int(0.8*n)]
+    val_   = x[:, int(0.8*n):int(0.9*n)]
+    test_  = x[:, int(0.9*n):]
 
+    train_data = DataLoader(slidingWindow(train_, L),
+                            batch_size= 22,# 59, # 22
+                            shuffle = False
+                            )
+    val_data = DataLoader(slidingWindow(val_, L),
+                            batch_size=22,
+                            shuffle = False
+                            )
+    test_data = DataLoader(slidingWindow(test_, L),
+                            batch_size=22,
+                            shuffle = False
+                            )
 
-train_ = x[:, :int(0.8*n)]
-val_   = x[:, int(0.8*n):int(0.9*n)]
-test_  = x[:, int(0.9*n):]
+    for epoch in range(1, 50):
+        train(v, train_data, criterion, opt, device, epoch, VQ = True)
 
-train_data = DataLoader(slidingWindow(train_, L),
-                        batch_size= 22,# 59, # 22
-                        shuffle = False
-                        )
-val_data = DataLoader(slidingWindow(val_, L),
-                        batch_size=22,
-                        shuffle = False
-                        )
-test_data = DataLoader(slidingWindow(test_, L),
-                        batch_size=22,
-                        shuffle = False
-                        )
-
-for epoch in range(1, 50):
-    train(v, train_data, criterion, opt, device, epoch, VQ = True)
-
-torch.save(x, r'modules\data_{}channels_{}latent_{}window.pt'.format(n_channels,latent_dims, L))
-torch.save(params, r'modules\params_{}channels_{}latent_{}window.pt'.format(n_channels,latent_dims, L))
-torch.save(v, r'modules\vq_ema_{}channels_{}latent_{}window.pt'.format(n_channels,latent_dims, L))
+    torch.save(x, r'modules\data_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, i))
+    torch.save(params, r'modules\params_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, i))
+    torch.save(v, r'modules\vq_ema_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, i))
 # In[19]:
 
 
-def compare(dataset, model, VQ=True):
-    model.eval()
-    rec = []
-    x = []
-    with torch.no_grad():
-        for i, (data, v) in enumerate(dataset):
-            if VQ:
-                x_rec, loss, mu, logvar = model(data)
-            else:
-                x_rec, mu, logvar = model(data)
-            z = model.reparametrization_trick(mu, logvar)
-            if v.dim() == 1:
-                v = v.unsqueeze(0)
-                v = v.T
-                v = v.unsqueeze(-1)
-#             print(v.shape)
-#             print(x_rec.shape)
-#             print((x_rec * v).shape)
-#             print(i)
-
-            x.extend((data*v)[:,:,0].detach().numpy())
-            rec.extend(((x_rec*v)[:,:,0]).detach().numpy())
-        
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(rec, "r--")
-    ax.plot(x[:], "b-")
-    plt.ylim(50,600)
-    plt.grid(True)
-    plt.show()
+# def compare(dataset, model, VQ=True):
+#     model.eval()
+#     rec = []
+#     x = []
+#     with torch.no_grad():
+#         for i, (data, v) in enumerate(dataset):
+#             if VQ:
+#                 x_rec, loss, mu, logvar = model(data)
+#             else:
+#                 x_rec, mu, logvar = model(data)
+#             z = model.reparametrization_trick(mu, logvar)
+#             if v.dim() == 1:
+#                 v = v.unsqueeze(0)
+#                 v = v.T
+#                 v = v.unsqueeze(-1)
+# #             print(v.shape)
+# #             print(x_rec.shape)
+# #             print((x_rec * v).shape)
+# #             print(i)
+#
+#             x.extend((data*v)[:,:,0].detach().numpy())
+#             rec.extend(((x_rec*v)[:,:,0]).detach().numpy())
+#
+#     fig, ax = plt.subplots(figsize=(10, 5))
+#     ax.plot(rec, "r--")
+#     ax.plot(x[:], "b-")
+#     plt.ylim(50,600)
+#     plt.grid(True)
+#     plt.show()
 
 
 # In[23]:
 
 
-v.cpu()
-compare(test_data, v, VQ=True)
-v.to(device)
+# v.cpu()
+# compare(test_data, v, VQ=True)
+# v.to(device)
 
 
 # In[22]:

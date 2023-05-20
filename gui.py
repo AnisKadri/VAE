@@ -473,16 +473,16 @@ class VQ_gui(tk.Tk):
 
 if __name__ == "__main__":
   n_channels = 1
-  latent_dims = 4
+  latent_dims = 6
   L = 60
-  x = torch.load(r'modules\data_{}channels_{}latent_{}window.pt'.format(n_channels,latent_dims, L))
+  x = torch.load(r'modules\data_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, 50))
   x = torch.FloatTensor(x)
 
-  params = torch.load(r'modules\params_{}channels_{}latent_{}window.pt'.format(n_channels,latent_dims, L))
+  params = torch.load(r'modules\params_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, 50))
   # params = torch.FloatTensor(params)
   print(params)
 
-  v = torch.load(r'modules\vq_ema_{}channels_{}latent_{}window.pt'.format(n_channels,latent_dims, L))
+  v = torch.load(r'modules\vq_ema_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, 50))
   print(v)
   L = v._L
   latent_dims = v._latent_dims
@@ -505,6 +505,6 @@ if __name__ == "__main__":
                          shuffle=False
                          )
 
-  app = VQ_gui(v, train_data, params, repetition=1)
+  app = VQ_gui(v, train_data, params, repetition=10)
 
   app.mainloop()
