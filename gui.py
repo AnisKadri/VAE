@@ -31,7 +31,7 @@ class VQ_gui(tk.Tk):
     self.L              = self.model._L
     self.T              = self.data.dataset.data.shape[1]- self.L     # last window is removed because for each window we sample only 1 mu/logvar/z etc
     self.batch_size     = self.data.batch_size
-    # self.n_channels     = self.model._n_channels
+    self.n_channels     = self.model._n_channels
     self.num_embed       = self.model._num_embed
     self.latent_dims    = self.model._latent_dims
     self.code_book      = deepcopy(self.model.quantizer._embedding.weight.data)
@@ -46,7 +46,7 @@ class VQ_gui(tk.Tk):
     self.x, self.mu, self.logvar, self.z, self.embed, self.x_rec, self.x_rec_mean, self.norm_vec = self.sample_from_data_VQ(model, data, repetition)
     print("embed shape", self.embed.shape)
 
-    self.MI_scores = self.calculate_MI_score(self.mean)
+    # self.MI_scores = self.calculate_MI_score(self.mean)
 
     # create a DataLoader from mu and logvar for later generation
     self.mu_loader = DataLoader(self.mu, #slidingWindow(self.mu, self.L),
@@ -59,7 +59,7 @@ class VQ_gui(tk.Tk):
                                )
 
     # create window and frames layout
-    button_frame, grid_frame, heatmap_frame, plot_frame, scatter_frame = self.create_frames()
+    button_frame, grid_frame, heatmap_frame, plot_frame= self.create_frames()
 
     # Create the text input widgets
     self.create_spinboxes(grid_frame)
@@ -74,18 +74,21 @@ class VQ_gui(tk.Tk):
     self.ax_heatmap, self.heatmap, self.heatmap_canvas = self.create_heatmap(heatmap_frame)
 
     # create scatterogram
-    self.ax_scatter, self.scatter, self.scatter_canvas = self.create_scatter(scatter_frame, 10)
+    # self.ax_scatter, self.scatter, self.scatter_canvas = self.create_scatter(scatter_frame, 10)
 
 
 
 
   def create_heatmap(self, heatmap_frame):
-    fig = Figure(figsize=(5, 4), dpi=100)
+    fig = Figure(figsize=(8, 6), dpi=100)
     ax_heatmap = fig.add_subplot(111)
     heatmap = self.plot_heatmap(ax_heatmap, self.code_book)
     heatmap_canvas = FigureCanvasTkAgg(fig, master=heatmap_frame)
     heatmap_canvas.draw()
     heatmap_canvas.get_tk_widget().pack(fill="both", expand=True)
+    cbar = fig.colorbar(heatmap)
+    ax_heatmap.set_xlabel('Num of Embeddings')
+    ax_heatmap.set_ylabel('Latent Dimensions')
 
     return ax_heatmap, heatmap, heatmap_canvas
 
@@ -201,12 +204,12 @@ class VQ_gui(tk.Tk):
     plot_frame = tk.Frame(parent_frame)
     plot_frame.grid(row=0, column=0, sticky="nsew")
 
-    scatter_frame = tk.Frame(parent_frame)
-    scatter_frame.grid(row=0, column=1, sticky="nsew")
+    # scatter_frame = tk.Frame(parent_frame)
+    # scatter_frame.grid(row=0, column=1, sticky="nsew")
 
     # create buttons frame
     button_frame = tk.Frame(parent_frame)
-    button_frame.grid(row=0, column=5, sticky="nsew")
+    button_frame.grid(row=0, column=1, sticky="nsew")
 
     # create bottom frame for inputs and heatmap
     bottom_frame = tk.Frame(self)
@@ -222,12 +225,14 @@ class VQ_gui(tk.Tk):
     grid_frame = tk.Frame(bottom_frame, padx=10, pady=10)
     grid_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=1)
 
-    return button_frame, grid_frame, heatmap_frame, plot_frame, scatter_frame
+    return button_frame, grid_frame, heatmap_frame, plot_frame#, scatter_frame
 
   def plot_heatmap(self, ax_heatmap, codebook):
     ax_heatmap.clear()
     heatmap = ax_heatmap.imshow(codebook)
     ax_heatmap.set_title('Codebook Heatmap')
+    ax_heatmap
+
 
     return heatmap
 
@@ -266,7 +271,11 @@ class VQ_gui(tk.Tk):
     ax_plot.plot(x, "b")
     rec_lines = ax_plot.plot(x_rec, "orange", alpha=0.2)
     rec_lines_mean = ax_plot.plot(x_rec_mean, "r")
+    # Create custom legend handles and labels
+    blue_handle = plt.Line2D([], [], color='b', label='Original Data')
+    red_handle = plt.Line2D([], [], color='r', label='Reconstructions mean')
     ax_plot.set_title('Reconstruction')
+    ax_plot.legend(handles=[blue_handle, red_handle], loc="upper right")
     ax_plot.grid()
 
     return rec_lines, rec_lines_mean
@@ -320,7 +329,7 @@ class VQ_gui(tk.Tk):
     idx = 0
 
     # Init tensors to store results
-    x_rec = torch.empty(self.repetition, self.T, self.num_embed)
+    x_rec = torch.empty(self.repetition, self.T, self.n_channels)
 
     # Loop through data n times
     for i, (_mu, _logvar) in enumerate(zip(self.mu_loader, self.logvar_loader)):
@@ -370,9 +379,10 @@ class VQ_gui(tk.Tk):
   @torch.no_grad()
   def sample_from_data_VQ(self, model, data, n):
     # Init tensors to store results
-    x = torch.empty((self.T, self.num_embed))
-    mu, logvar, z, embed = (torch.empty((self.repetition, self.T, self.num_embed , self.latent_dims)) for _ in range(4))
-    x_rec = torch.empty(self.repetition, self.T, self.num_embed)
+    model.eval()
+    x = torch.empty((self.T, self.n_channels))
+    mu, logvar, z, embed = (torch.empty((self.repetition, self.T, self.num_embed, self.latent_dims)) for _ in range(4))
+    x_rec = torch.empty(self.repetition, self.T, self.n_channels)
     # print(x_rec.shape)
 
     # Init the normalisation vector and batch index
@@ -435,9 +445,10 @@ class VQ_gui(tk.Tk):
 
     for row in range(self.num_embed):
       for col in range(self.latent_dims):
-        # Calculate mutual Info
-        embed_vec = self.embed[:, row, col].numpy()
-        mutual_info = mutual_info_score(var, embed_vec, contingency=None)
+        for channel in range(self.n_channels):
+          # Calculate mutual Info
+          embed_vec = self.embed[:, row, col].numpy()
+          mutual_info = mutual_info_score(var[channel], embed_vec, contingency=None)
 
         # fill the MI_scores Tensor
         MI_scores[row, col] = torch.tensor(mutual_info)
@@ -473,16 +484,20 @@ class VQ_gui(tk.Tk):
 
 if __name__ == "__main__":
   n_channels = 1
-  latent_dims = 6
+  latent_dims = 4
   L = 60
-  x = torch.load(r'modules\data_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, 50))
+  i = 10
+
+  # x = torch.load(r'modules\data_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
+  # params = torch.load(r'modules\params_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
+  # v = torch.load(r'modules\vq_ema_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
+
+  x = torch.load(r'modules\data_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, i))
+  params = torch.load(r'modules\params_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, i))
+  v = torch.load(r'modules\vq_ema_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, i))
+
   x = torch.FloatTensor(x)
-
-  params = torch.load(r'modules\params_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, 50))
-  # params = torch.FloatTensor(params)
   print(params)
-
-  v = torch.load(r'modules\vq_ema_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, 50))
   print(v)
   L = v._L
   latent_dims = v._latent_dims

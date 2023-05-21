@@ -338,4 +338,5 @@ class Gen():
         
         plt.xticks(rotation=45)
         plt.grid(True)
+        fig.tight_layout()
         plt.show()

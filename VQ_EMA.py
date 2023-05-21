@@ -49,7 +49,7 @@ effects = {
         "type":"linear"
         },
     "Seasonality": {
-        "occurances":0,
+        "occurances":1,
         "frequency_per_week":(7, 14), # min and max occurances per week
         "amplitude_range":(5, 20),
         },
@@ -70,7 +70,7 @@ effects = {
     }
 
 ### Init Model
-latent_dims = 6 # 6 # 17
+latent_dims = 4 # 6 # 17
 L= 60# 39 #32
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -98,7 +98,7 @@ v = VQ_MST_VAE(n_channels = n_channels,
 v = v.to(device)
 opt = optim.Adam(v.parameters(), lr = 0.005043529186448577) # 0.005043529186448577 0.006819850049647945
 
-for i in range(100):
+for i in range(10,11):
     X = Gen(periode, step, val, n_channels, effects)
     x, params, e_params = X.parameters()
     pprint.pprint(params)
@@ -124,7 +124,7 @@ for i in range(100):
                             shuffle = False
                             )
 
-    for epoch in range(1, 50):
+    for epoch in range(1, 100):
         train(v, train_data, criterion, opt, device, epoch, VQ = True)
 
     torch.save(x, r'modules\data_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, i))
@@ -133,43 +133,43 @@ for i in range(100):
 # In[19]:
 
 
-# def compare(dataset, model, VQ=True):
-#     model.eval()
-#     rec = []
-#     x = []
-#     with torch.no_grad():
-#         for i, (data, v) in enumerate(dataset):
-#             if VQ:
-#                 x_rec, loss, mu, logvar = model(data)
-#             else:
-#                 x_rec, mu, logvar = model(data)
-#             z = model.reparametrization_trick(mu, logvar)
-#             if v.dim() == 1:
-#                 v = v.unsqueeze(0)
-#                 v = v.T
-#                 v = v.unsqueeze(-1)
-# #             print(v.shape)
-# #             print(x_rec.shape)
-# #             print((x_rec * v).shape)
-# #             print(i)
-#
-#             x.extend((data*v)[:,:,0].detach().numpy())
-#             rec.extend(((x_rec*v)[:,:,0]).detach().numpy())
-#
-#     fig, ax = plt.subplots(figsize=(10, 5))
-#     ax.plot(rec, "r--")
-#     ax.plot(x[:], "b-")
-#     plt.ylim(50,600)
-#     plt.grid(True)
-#     plt.show()
+def compare(dataset, model, VQ=True):
+    model.eval()
+    rec = []
+    x = []
+    with torch.no_grad():
+        for i, (data, v) in enumerate(dataset):
+            if VQ:
+                x_rec, loss, mu, logvar = model(data)
+            else:
+                x_rec, mu, logvar = model(data)
+            z = model.reparametrization_trick(mu, logvar)
+            if v.dim() == 1:
+                v = v.unsqueeze(0)
+                v = v.T
+                v = v.unsqueeze(-1)
+#             print(v.shape)
+#             print(x_rec.shape)
+#             print((x_rec * v).shape)
+#             print(i)
+
+            x.extend((data*v)[:,:,0].detach().numpy())
+            rec.extend(((x_rec*v)[:,:,0]).detach().numpy())
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(rec, "r--")
+    ax.plot(x[:], "b-")
+    # plt.ylim(50,600)
+    plt.grid(True)
+    plt.show()
 
 
 # In[23]:
 
 
-# v.cpu()
-# compare(test_data, v, VQ=True)
-# v.to(device)
+v.cpu()
+compare(test_data, v, VQ=True)
+v.to(device)
 
 
 # In[22]:

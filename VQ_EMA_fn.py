@@ -72,19 +72,19 @@ class TCVAE_Encoder(nn.Module):
     def forward(self, x):
         ### CNN
         for i, cnn in enumerate(self.cnn_layers):
-            print("Encoder Cnn", x.shape)
+            # print("Encoder Cnn", x.shape)
             x = cnn(x)
         cnn_shape = x.shape
         x = x.view(x.size(0), -1)
-        print("Encoder reshape after Cnn ", x.shape)
+        # print("Encoder reshape after Cnn ", x.shape)
         ### MLP
         mu = self.encoder_mu(x)
         logvar = self.encoder_logvar(x)
-        print("Encoder mu after lin ", mu.shape)
+        # print("Encoder mu after lin ", mu.shape)
         mu = mu.view(mu.shape[0], self.n_channels, -1)
         logvar = logvar.view(logvar.shape[0], self.n_channels, -1)
-        print("Encoder mu after reshape ", mu.shape)
-        print("Calculated n", self.n)
+        # print("Encoder mu after reshape ", mu.shape)
+        # print("Calculated n", self.n)
                 # mu.reshape
 
         return mu, logvar
@@ -177,8 +177,8 @@ class LongShort_TCVAE_Encoder(nn.Module):
         #
         # print("After Cat: ", mu.shape)
 
-        mu_red = self.reduction_layer(mu)
-        logvar_red = self.reduction_layer(logvar)
+        # mu_red = self.reduction_layer(mu)
+        # logvar_red = self.reduction_layer(logvar)
 
         return mu, logvar
 
@@ -200,7 +200,7 @@ class VQ_Quantizer(nn.Module):
 
         self._decay = decay
         self._epsilon = epsilon
-        self._std = 0.5
+        self._std = 0.8
 
     def forward(self, x):
         # x : BCL -> BLC
@@ -225,15 +225,17 @@ class VQ_Quantizer(nn.Module):
 
         embed_indices = torch.argmin(dist, dim=1).unsqueeze(1)
         # print("embed indices",embed_indices)
-        noise = torch.randn(embed_indices.shape) * self._std
-        noise = torch.round(noise).to(torch.int32)
-        new_embed_indices = embed_indices + noise
-        new_embed_indices = torch.clamp(new_embed_indices, max=self._num_embed-1, min =0)
+        if self.training:
+            noise = torch.randn(embed_indices.shape) * self._std
+            noise = torch.round(noise).to(torch.int32)
+            new_embed_indices = embed_indices + noise
+            new_embed_indices = torch.clamp(new_embed_indices, max=self._num_embed-1, min =0)
+            embed_indices = new_embed_indices
         # print("noise ",noise.shape)
         # print("both together",new_embed_indices)
         embed_Matrix = torch.zeros_like(dist)
         #         print(embed_Matrix.shape)
-        embed_Matrix.scatter_(1, new_embed_indices, 1)
+        embed_Matrix.scatter_(1, embed_indices, 1)
         #         print("Embedding ", embed_Matrix[:10,:])
 
         # get the corresponding e vectors
@@ -293,7 +295,7 @@ class VQ_MST_VAE(nn.Module):
         self._slope = slope
         self._first_kernel = first_kernel
         self._commit_loss = commit_loss
-        self._num_embed = 4 * self._num_layers * self._n_channels
+        self._num_embed = self._n_channels * 4 * self._num_layers
 
         self.encoder = self._v_encoder(self._n_channels, self._num_layers, self._latent_dims, self._L, self._slope,
                                        self._first_kernel)
