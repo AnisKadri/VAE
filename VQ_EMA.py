@@ -36,7 +36,7 @@ from VQ_EMA_fn import *
 periode = 15 #days
 step = 5 # mess interval in minutes
 val = 500
-n_channels = 1
+n_channels = 10
 effects = {
     "Pulse": {
         "occurances":0,
@@ -93,7 +93,10 @@ v = VQ_MST_VAE(n_channels = n_channels,
                             L=L,
                             slope = 0,
                             first_kernel = 20, #11, #20
-                            commit_loss = 0.25) #10 5
+                            commit_loss = 0.25,
+                            modified= True,
+                            reduction=True
+               ) #10 5
 
 v = v.to(device)
 opt = optim.Adam(v.parameters(), lr = 0.005043529186448577) # 0.005043529186448577 0.006819850049647945
