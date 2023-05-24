@@ -36,7 +36,7 @@ from VQ_EMA_fn import *
 periode = 15 #days
 step = 5 # mess interval in minutes
 val = 500
-n_channels = 10
+n_channels = 1
 effects = {
     "Pulse": {
         "occurances":0,
@@ -70,7 +70,7 @@ effects = {
     }
 
 ### Init Model
-latent_dims = 4 # 6 # 17
+latent_dims = 6 # 6 # 17
 L= 60# 39 #32
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -94,14 +94,14 @@ v = VQ_MST_VAE(n_channels = n_channels,
                             slope = 0,
                             first_kernel = 20, #11, #20
                             commit_loss = 0.25,
-                            modified= True,
+                            modified= False,
                             reduction=True
                ) #10 5
 
 v = v.to(device)
 opt = optim.Adam(v.parameters(), lr = 0.005043529186448577) # 0.005043529186448577 0.006819850049647945
 
-for i in range(10,11):
+for i in range(12,13):
     X = Gen(periode, step, val, n_channels, effects)
     x, params, e_params = X.parameters()
     pprint.pprint(params)
