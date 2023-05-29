@@ -73,7 +73,7 @@ class VQ_gui(tk.Tk):
     # create heatmap
     self.ax_heatmap, self.heatmap, self.heatmap_canvas = self.create_heatmap(heatmap_frame)
 
-    # create scatterogram
+    # create scatter
     # self.ax_scatter, self.scatter, self.scatter_canvas = self.create_scatter(scatter_frame, 10)
 
 
@@ -171,11 +171,11 @@ class VQ_gui(tk.Tk):
     self.file_name.pack(side="top", padx=5, pady=5, fill="x")
 
   def create_spinboxes(self, grid_frame):
-    for row in range(self.latent_dims):
-      for col in range(self.num_embed):
+    for col in range(self.latent_dims):
+      for row in range(self.num_embed):
         self.double_var = tk.DoubleVar()
         # create the Spinbox and link it to the DoubleVar
-        self.spinbox = Spinbox(grid_frame, from_=-50.0, to=50, increment=0.5, textvariable=self.double_var,
+        self.spinbox = Spinbox(grid_frame, from_=-500.0, to=500, increment=5, textvariable=self.double_var,
                                command=lambda: self.sample_from_codebook(row, col))
         # self.spinbox.bind('<Return>', self.set_spinbox_value(row, col))
         self.spinbox.grid(row=row, column=col, sticky="NSEW")
@@ -362,8 +362,8 @@ class VQ_gui(tk.Tk):
   def set_new_val(self, code):
     # loop through all the spinboxes to check for the changed one
     for i, spin in enumerate(self.spinboxs):
-      row = i // self.num_embed
-      col = i % self.num_embed
+      col = i // self.num_embed
+      row = i % self.num_embed
       new_val = np.float32(spin.get())
       new_code_book = code
 
@@ -443,12 +443,12 @@ class VQ_gui(tk.Tk):
     print(self.latent_dims)
     print(self.embed.shape)
 
-    for row in range(self.num_embed):
-      for col in range(self.latent_dims):
-        for channel in range(self.n_channels):
+    for col in range(self.num_embed):
+      for row in range(self.latent_dims):
+        # for channel in range(self.n_channels):
           # Calculate mutual Info
-          embed_vec = self.embed[:, row, col].numpy()
-          mutual_info = mutual_info_score(var[channel], embed_vec, contingency=None)
+        embed_vec = self.embed[:, row, col].numpy()
+        mutual_info = mutual_info_score(var, embed_vec, contingency=None)
 
         # fill the MI_scores Tensor
         MI_scores[row, col] = torch.tensor(mutual_info)
@@ -486,15 +486,15 @@ if __name__ == "__main__":
   n_channels = 1
   latent_dims = 6
   L = 60
-  i = 12
+  i = 20
 
   # x = torch.load(r'modules\data_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
   # params = torch.load(r'modules\params_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
   # v = torch.load(r'modules\vq_ema_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
 
-  x = torch.load(r'modules\data_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, i))
-  params = torch.load(r'modules\params_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, i))
-  v = torch.load(r'modules\vq_ema_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, i))
+  x = torch.load(r'modules\data_std_variation_{}channels_{}latent_{}window_{}_noise.pt'.format(n_channels,latent_dims, L, i))
+  params = torch.load(r'modules\params_std_variation_{}channels_{}latent_{}window_{}_noise.pt'.format(n_channels,latent_dims, L, i))
+  v = torch.load(r'modules\vq_ema_std_variation_{}channels_{}latent_{}window_{}_noise.pt'.format(n_channels,latent_dims, L, i))
 
   x = torch.FloatTensor(x)
   print(params)
@@ -520,6 +520,6 @@ if __name__ == "__main__":
                          shuffle=False
                          )
 
-  app = VQ_gui(v, train_data, params, repetition=10)
+  app = VQ_gui(v, train_data, params, repetition=50)
 
   app.mainloop()

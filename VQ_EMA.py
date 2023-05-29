@@ -49,7 +49,7 @@ effects = {
         "type":"linear"
         },
     "Seasonality": {
-        "occurances":1,
+        "occurances":0,
         "frequency_per_week":(7, 14), # min and max occurances per week
         "amplitude_range":(5, 20),
         },
@@ -94,45 +94,148 @@ v = VQ_MST_VAE(n_channels = n_channels,
                             slope = 0,
                             first_kernel = 20, #11, #20
                             commit_loss = 0.25,
-                            modified= False,
+                            modified= True,
                             reduction=True
                ) #10 5
 
 v = v.to(device)
 opt = optim.Adam(v.parameters(), lr = 0.005043529186448577) # 0.005043529186448577 0.006819850049647945
 
-for i in range(12,13):
-    X = Gen(periode, step, val, n_channels, effects)
-    x, params, e_params = X.parameters()
-    pprint.pprint(params)
-    pprint.pprint(e_params)
-    # X.show()
-    x = torch.FloatTensor(x)
-    n = x.shape[1]
 
-    train_ = x[:, :int(0.8*n)]
-    val_   = x[:, int(0.8*n):int(0.9*n)]
-    test_  = x[:, int(0.9*n):]
+def sample_and_train(effects, n_channels, periode, step, val, latent_dims, L, naming):
+    # global test_data
+    for i in range(30):
+        X = Gen(periode, step, val, n_channels, effects)
+        x, params, e_params = X.parameters()
+        pprint.pprint(params)
+        pprint.pprint(e_params)
+        # X.show()
+        x = torch.FloatTensor(x)
+        n = x.shape[1]
 
-    train_data = DataLoader(slidingWindow(train_, L),
-                            batch_size= 22,# 59, # 22
-                            shuffle = False
-                            )
-    val_data = DataLoader(slidingWindow(val_, L),
-                            batch_size=22,
-                            shuffle = False
-                            )
-    test_data = DataLoader(slidingWindow(test_, L),
-                            batch_size=22,
-                            shuffle = False
-                            )
+        train_ = x[:, :int(0.8 * n)]
+        val_ = x[:, int(0.8 * n):int(0.9 * n)]
+        test_ = x[:, int(0.9 * n):]
 
-    for epoch in range(1, 100):
-        train(v, train_data, criterion, opt, device, epoch, VQ = True)
+        train_data = DataLoader(slidingWindow(train_, L),
+                                batch_size=22,  # 59, # 22
+                                shuffle=False
+                                )
+        val_data = DataLoader(slidingWindow(val_, L),
+                              batch_size=22,
+                              shuffle=False
+                              )
+        test_data = DataLoader(slidingWindow(test_, L),
+                               batch_size=22,
+                               shuffle=False
+                               )
 
-    torch.save(x, r'modules\data_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, i))
-    torch.save(params, r'modules\params_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, i))
-    torch.save(v, r'modules\vq_ema_trend_{}channels_{}latent_{}window_{}.pt'.format(n_channels,latent_dims, L, i))
+        for epoch in range(1, 30):
+            train(v, train_data, criterion, opt, device, epoch, VQ=True)
+
+        torch.save(x, r'modules\data_{}_{}channels_{}latent_{}window_{}_noise.pt'.format(naming, n_channels, latent_dims, L, i))
+        torch.save(params,
+                   r'modules\params_{}_{}channels_{}latent_{}window_{}_noise.pt'.format(naming, n_channels, latent_dims, L, i))
+        torch.save(v, r'modules\vq_ema_{}_{}channels_{}latent_{}window_{}_noise.pt'.format(naming, n_channels, latent_dims, L, i))
+
+
+sample_and_train(effects, n_channels, periode, step, val, latent_dims, L, naming="trend")
+effects = {
+    "Pulse": {
+        "occurances":0,
+        "max_amplitude":1.5,
+        "interval":40
+        },
+    "Trend": {
+        "occurances":0,
+        "max_slope":0.005,
+        "type":"linear"
+        },
+    "Seasonality": {
+        "occurances":1,
+        "frequency_per_week":(7, 14), # min and max occurances per week
+        "amplitude_range":(5, 20),
+        },
+    "std_variation": {
+        "occurances":0,
+        "max_value":10,
+        "interval":1000,
+        },
+    "channels_coupling":{
+        "occurances":0,
+        "coupling_strengh":20
+        },
+    "Noise": {
+        "occurances":0,
+        "max_slope":0.005,
+        "type":"linear"
+        }
+    }
+sample_and_train(effects, n_channels, periode, step, val, latent_dims, L, naming="seasonality")
+effects = {
+    "Pulse": {
+        "occurances":0,
+        "max_amplitude":1.5,
+        "interval":40
+        },
+    "Trend": {
+        "occurances":0,
+        "max_slope":0.005,
+        "type":"linear"
+        },
+    "Seasonality": {
+        "occurances":0,
+        "frequency_per_week":(7, 14), # min and max occurances per week
+        "amplitude_range":(5, 20),
+        },
+    "std_variation": {
+        "occurances":1,
+        "max_value":10,
+        "interval":1000,
+        },
+    "channels_coupling":{
+        "occurances":0,
+        "coupling_strengh":20
+        },
+    "Noise": {
+        "occurances":0,
+        "max_slope":0.005,
+        "type":"linear"
+        }
+    }
+sample_and_train(effects, n_channels, periode, step, val, latent_dims, L, naming="std_variation")
+effects = {
+    "Pulse": {
+        "occurances":0,
+        "max_amplitude":1.5,
+        "interval":40
+        },
+    "Trend": {
+        "occurances":1,
+        "max_slope":0.005,
+        "type":"linear"
+        },
+    "Seasonality": {
+        "occurances":1,
+        "frequency_per_week":(7, 14), # min and max occurances per week
+        "amplitude_range":(5, 20),
+        },
+    "std_variation": {
+        "occurances":0,
+        "max_value":10,
+        "interval":1000,
+        },
+    "channels_coupling":{
+        "occurances":0,
+        "coupling_strengh":20
+        },
+    "Noise": {
+        "occurances":0,
+        "max_slope":0.005,
+        "type":"linear"
+        }
+    }
+sample_and_train(effects, n_channels, periode, step, val, latent_dims, L, naming="trend_seasonality")
 # In[19]:
 
 
@@ -170,9 +273,9 @@ def compare(dataset, model, VQ=True):
 # In[23]:
 
 
-v.cpu()
-compare(test_data, v, VQ=True)
-v.to(device)
+# v.cpu()
+# compare(test_data, v, VQ=True)
+# v.to(device)
 
 
 # In[22]:

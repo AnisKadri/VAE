@@ -385,8 +385,10 @@ class VQ_MST_VAE(nn.Module):
                                        self._first_kernel, self._modified, self._reduction)
         self.decoder = self._v_decoder(self._n_channels, self._num_layers, self._latent_dims, self._L, self._slope,
                                        self._first_kernel, self._modified, self._reduction)
-        self.quantizer = self._v_quantizer(self._latent_dims, self._num_embed, self._commit_loss, decay=0.99,
+        self.quantizer = self._v_quantizer(self._num_embed, self._latent_dims, self._commit_loss, decay=0.99,
                                            epsilon=1e-5)
+
+        self.bn = nn.BatchNorm1d(self._num_embed)
 
     def reparametrization_trick(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -397,7 +399,11 @@ class VQ_MST_VAE(nn.Module):
         mu, logvar = self.encoder(x)
 
         z = self.reparametrization_trick(mu, logvar)
-
+        # print(z.shape)
+        # z = self.bn(self.quantizer._embedding.weight[None,:])
+        # is_larger = torch.all(torch.gt(z[0], self.quantizer._embedding.weight))
+        # print(z.shape)
+        # print("Is encoder output larger than the set of vectors?", is_larger)
         e, loss_quantize = self.quantizer(z)
 
         # print("----------------Encoder Output-------------")
