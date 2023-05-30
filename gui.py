@@ -175,7 +175,7 @@ class VQ_gui(tk.Tk):
       for row in range(self.num_embed):
         self.double_var = tk.DoubleVar()
         # create the Spinbox and link it to the DoubleVar
-        self.spinbox = Spinbox(grid_frame, from_=-500.0, to=500, increment=5, textvariable=self.double_var,
+        self.spinbox = Spinbox(grid_frame, from_=-500.0, to=500, increment=0.2, textvariable=self.double_var,
                                command=lambda: self.sample_from_codebook(row, col))
         # self.spinbox.bind('<Return>', self.set_spinbox_value(row, col))
         self.spinbox.grid(row=row, column=col, sticky="NSEW")
@@ -268,7 +268,7 @@ class VQ_gui(tk.Tk):
 
   def plot_reconstruction(self, ax_plot, x, x_rec, x_rec_mean):
     ax_plot.clear()
-    ax_plot.plot(x, "b")
+    ax_plot.plot(x, "b", alpha=0.2)
     rec_lines = ax_plot.plot(x_rec, "orange", alpha=0.2)
     rec_lines_mean = ax_plot.plot(x_rec_mean, "r")
     # Create custom legend handles and labels
@@ -312,7 +312,7 @@ class VQ_gui(tk.Tk):
     # Reset Spinboxes values
     for row in range(self.latent_dims):
       for col in range(self.num_embed):
-        value = self.code_book[row][col].detach().numpy()
+        value = self.code_book[col][row].detach().numpy()
         idx = row * self.num_embed + col
         self.double_vars[idx].set(value)
 
@@ -484,17 +484,21 @@ class VQ_gui(tk.Tk):
 
 if __name__ == "__main__":
   n_channels = 1
-  latent_dims = 6
+  latent_dims = 2
   L = 60
-  i = 20
+  i = 0
+  effect = "seasonality" # trend, seasonality, std_variation, trend_seasonality
+
 
   # x = torch.load(r'modules\data_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
   # params = torch.load(r'modules\params_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
   # v = torch.load(r'modules\vq_ema_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
 
-  x = torch.load(r'modules\data_std_variation_{}channels_{}latent_{}window_{}_noise.pt'.format(n_channels,latent_dims, L, i))
-  params = torch.load(r'modules\params_std_variation_{}channels_{}latent_{}window_{}_noise.pt'.format(n_channels,latent_dims, L, i))
-  v = torch.load(r'modules\vq_ema_std_variation_{}channels_{}latent_{}window_{}_noise.pt'.format(n_channels,latent_dims, L, i))
+  x = torch.load(r'modules\data_{}_{}channels_{}latent_{}window_{}_NI.pt'.format(effect, n_channels,latent_dims, L, i))
+  params = torch.load(r'modules\params_{}_{}channels_{}latent_{}window_{}_NI.pt'.format(effect, n_channels,latent_dims, L, i))
+  v = torch.load(r'modules\vq_ema_{}_{}channels_{}latent_{}window_{}_NI.pt'.format(effect, n_channels,latent_dims, L, i))
+
+
 
   x = torch.FloatTensor(x)
   print(params)
@@ -520,6 +524,6 @@ if __name__ == "__main__":
                          shuffle=False
                          )
 
-  app = VQ_gui(v, train_data, params, repetition=50)
+  app = VQ_gui(v, train_data, params, repetition=3)
 
   app.mainloop()

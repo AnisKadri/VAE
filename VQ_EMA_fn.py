@@ -258,6 +258,7 @@ class LongShort_TCVAE_Encoder(nn.Module):
 
         return mu, logvar
 
+
 class VQ_Quantizer(nn.Module):
     def __init__(self, num_embed, dim_embed, commit_loss, decay, epsilon=1e-5):
         super(VQ_Quantizer, self).__init__()
@@ -279,42 +280,51 @@ class VQ_Quantizer(nn.Module):
 
     def forward(self, x):
         # x : BCL -> BLC
-        # print(x.shape)
-        x = x.permute(0, 2, 1).contiguous()
+        #         print(x.shape)
         x_shape = x.shape
+        x = x.permute(0, 2, 1).contiguous()
+
+        #         print(x.shape)
 
         # flaten the input to have the Channels as embedding space
         x_flat = x.view(-1, self._dim_embed)
+        #         print(x_flat.shape)
 
         # Calculate the distance to embeddings
 
-        # print("the non squared x", x_flat.shape )
-        # print("the non squared embed weights", self._embedding.weight.t().shape)
-        # print("the x ", torch.sum(x_flat**2, dim = 1, keepdim = True).shape)
-        # print("the embed ", torch.sum(self._embedding.weight**2, dim = 1).shape)
-        # print("the matmul ", torch.matmul(x_flat, self._embedding.weight.t()).shape)
+        #         print("the non squared x", x_flat.shape )
+        #         print("the non squared embed weights", self._embedding.weight.t().shape)
+        #         print("the x ", torch.sum(x_flat**2, dim = 1, keepdim = True).shape)
+        #         print("the embed ", torch.sum(self._embedding.weight**2, dim = 1).shape)
+        #         print("the matmul ", torch.matmul(x_flat, self._embedding.weight.t()).shape)
         dist = (torch.sum(x_flat ** 2, dim=1, keepdim=True)
                 + torch.sum(self._embedding.weight ** 2, dim=1)
                 - 2 * torch.matmul(x_flat, self._embedding.weight.t()))
         #         print(dist.shape)
 
         embed_indices = torch.argmin(dist, dim=1).unsqueeze(1)
-        # print("embed indices",embed_indices)
+        #         print("embed indices",embed_indices)
         if self.training:
             noise = torch.randn(embed_indices.shape) * self._std
-            noise = torch.round(noise).to(torch.int32)
+            noise = torch.round(noise).to(torch.int32).to(embed_indices)
             new_embed_indices = embed_indices + noise
-            new_embed_indices = torch.clamp(new_embed_indices, max=self._num_embed-1, min =0)
+            new_embed_indices = torch.clamp(new_embed_indices, max=self._num_embed - 1, min=0)
             embed_indices = new_embed_indices
         # print("noise ",noise.shape)
         # print("both together",new_embed_indices)
         embed_Matrix = torch.zeros_like(dist)
+        #         embed_Matrix = torch.zeros(embed_indices.shape[0], self._num_embed).to(x)
         #         print(embed_Matrix.shape)
         embed_Matrix.scatter_(1, embed_indices, 1)
-        #         print("Embedding ", embed_Matrix[:10,:])
+        #         print("embed_indices", embed_indices)
+        #         print("Embedding ", embed_Matrix.shape, embed_Matrix)
+        #         print("codebook", self._embedding.weight.shape, self._embedding.weight)
 
         # get the corresponding e vectors
-        quantizer = torch.matmul(embed_Matrix, self._embedding.weight).view(x_shape)
+        quantizer = torch.matmul(embed_Matrix, self._embedding.weight)
+        #         print("the quantizer", quantizer.shape, quantizer)
+        quantizer = quantizer.view(x_shape).permute(0, 2, 1).contiguous()
+        #         print("the quantizer", quantizer.shape, quantizer)
 
         # Use EMA to update the embedding vectors
         if self.training:
@@ -518,6 +528,9 @@ class TCVAE_Decoder(nn.Module):
                     self.cnn_layers.append(nn.BatchNorm1d(self.cnn_input))
 
         self.decoder_lin = nn.Linear(input_lin, L)
+        # MLP Layers for Mu and logvar output
+        self.decoder_mu = nn.Linear(input_lin, L)
+        self.decoder_logvar = nn.Linear(input_lin, L)
 
         # Init CNN
         self.cnn_layers.apply(init_weights)
@@ -534,11 +547,29 @@ class TCVAE_Decoder(nn.Module):
         for i, cnn in enumerate(self.cnn_layers):
             # print("Decoder Cnn ", x.shape)
             x = cnn(x)
-        #         print("Decoder shape after Cnn, should be reshaped? ", x.shape)
-        x = self.decoder_lin(x)
-        #         print("Decoder after lin ", x.shape)
+        ########################################################################## Put back for old decoder
+        #         #         print("Decoder shape after Cnn, should be reshaped? ", x.shape)
+        #         x = self.decoder_lin(x)
+        #         #         print("Decoder after lin ", x.shape)
 
-        return x
+        #         return x
+        ###################################################################################################################
+        cnn_shape = x.shape
+        #         print("Decoder after Cnn ", x.shape)
+        if not self.modified:
+            x = x.view(x.size(0), -1)
+        #             print("Decoder reshape after Cnn ", x.shape)
+        # ### MLP
+        mu = self.decoder_mu(x)
+        logvar = self.decoder_logvar(x)
+        #         print("Encoder mu after lin ", mu.shape)
+        if not self.modified:
+            mu = mu.view(mu.shape[0], self.n_channels, -1)
+            logvar = logvar.view(logvar.shape[0], self.n_channels, -1)
+        #             print("Encoder mu after reshape ", mu.shape)
+        # mu.reshape
+
+        return mu, logvar
 
 class LongShort_TCVAE_Decoder(nn.Module):
     def __init__(self, input_size, num_layers, latent_dims, L=30, slope=0.2, first_kernel=None,
@@ -559,17 +590,39 @@ class LongShort_TCVAE_Decoder(nn.Module):
 
         self.reduction_layer = nn.Conv1d(2 * input_size, input_size, kernel_size=1, stride=1, padding=0)
 
-    def forward(self, z):
-        x_long = self.longshort_decoder(z)
-        x_short = self.short_decoder(z)
-        # print("x_long ", x_long.shape)
-        # print("x_short ", x_short.shape)
+    def reparametrization_trick(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
 
-        x = torch.cat((x_short, x_long), dim=1)  # B.2C.L
-        # print("x_cat ", x.shape)
-        # if self._reduction:
-        x = self.reduction_layer(x)
-        # print("x_red ", x.shape)
+    def forward(self, z):
+        ################################### old decoder ############################################################
+        #         x_long = self.longshort_decoder(z)
+        #         x_short = self.short_decoder(z)
+        #         # print("x_long ", x_long.shape)
+        #         # print("x_short ", x_short.shape)
+
+        #         x = torch.cat((x_short, x_long), dim=1)  # B.2C.L
+        #         # print("x_cat ", x.shape)
+        #         # if self._reduction:
+        #         x = self.reduction_layer(x)
+        #         # print("x_red ", x.shape)
+        #         return x
+        #################################################################################################################
+        short_mu, short_logvar = self.short_decoder(z)
+        long_mu, long_logvar = self.longshort_decoder(z)
+
+        mu = torch.cat((short_mu, long_mu), axis=1)
+        logvar = torch.cat((short_logvar, long_logvar), axis=1)
+
+        #         print("Short Decoder mu: ", short_mu.shape)
+        #         print("Long Decoder mu: ", long_mu.shape)
+
+        #         print("After Cat: ", mu.shape)
+        if self._reduction:
+            mu = self.reduction_layer(mu)
+            logvar = self.reduction_layer(logvar)
+        x = self.reparametrization_trick(mu, logvar)
         return x
 
 
