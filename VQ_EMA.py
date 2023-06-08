@@ -44,7 +44,7 @@ effects = {
         "interval":40
         },
     "Trend": {
-        "occurances":1,
+        "occurances":0,
         "max_slope":0.005,
         "type":"linear"
         },
@@ -70,8 +70,8 @@ effects = {
     }
 
 ### Init Model
-latent_dims = 2 # 6 # 17
-L= 60# 39 #32
+latent_dims = 7 # 6 # 17
+L= 3455# 39 #32
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # v = vae(n_channels, L, latent_dims)
@@ -94,7 +94,7 @@ v = VQ_MST_VAE(n_channels = n_channels,
                             slope = 0,
                             first_kernel = 20, #11, #20
                             commit_loss = 0.25,
-                            modified= True,
+                            modified= False,
                             reduction=True
                ) #10 5
 
@@ -104,7 +104,7 @@ opt = optim.Adam(v.parameters(), lr = 0.005043529186448577) # 0.0050435291864485
 
 def sample_and_train(effects, n_channels, periode, step, val, latent_dims, L, naming):
     # global test_data
-    for i in range(1):
+    for i in range(1, 11):
         X = Gen(periode, step, val, n_channels, effects)
         x, params, e_params = X.parameters()
         pprint.pprint(params)
@@ -130,15 +130,47 @@ def sample_and_train(effects, n_channels, periode, step, val, latent_dims, L, na
                                shuffle=False
                                )
 
-        for epoch in range(1, 30):
+        for epoch in range(1, 5000//i):
             train(v, train_data, criterion, opt, device, epoch, VQ=True)
 
-        torch.save(x, r'modules\data_{}_{}channels_{}latent_{}window_{}_NI.pt'.format(naming, n_channels, latent_dims, L, i))
+        torch.save(x, r'modules\data_{}_{}channels_{}latent_{}window_{}_no_norm.pt'.format(naming, n_channels, latent_dims, L, i))
         torch.save(params,
-                   r'modules\params_{}_{}channels_{}latent_{}window_{}_NI.pt'.format(naming, n_channels, latent_dims, L, i))
-        torch.save(v, r'modules\vq_ema_{}_{}channels_{}latent_{}window_{}_NI.pt'.format(naming, n_channels, latent_dims, L, i))
+                   r'modules\params_{}_{}channels_{}latent_{}window_{}_no_norm.pt'.format(naming, n_channels, latent_dims, L, i))
+        torch.save(v, r'modules\vq_ema_{}_{}channels_{}latent_{}window_{}_no_norm.pt'.format(naming, n_channels, latent_dims, L, i))
 
 
+sample_and_train(effects, n_channels, periode, step, val, latent_dims, L, naming="no_effect")
+effects = {
+    "Pulse": {
+        "occurances":0,
+        "max_amplitude":1.5,
+        "interval":40
+        },
+    "Trend": {
+        "occurances":1,
+        "max_slope":0.005,
+        "type":"linear"
+        },
+    "Seasonality": {
+        "occurances":0,
+        "frequency_per_week":(7, 14), # min and max occurances per week
+        "amplitude_range":(5, 20),
+        },
+    "std_variation": {
+        "occurances":0,
+        "max_value":10,
+        "interval":1000,
+        },
+    "channels_coupling":{
+        "occurances":0,
+        "coupling_strengh":20
+        },
+    "Noise": {
+        "occurances":0,
+        "max_slope":0.005,
+        "type":"linear"
+        }
+    }
 sample_and_train(effects, n_channels, periode, step, val, latent_dims, L, naming="trend")
 effects = {
     "Pulse": {

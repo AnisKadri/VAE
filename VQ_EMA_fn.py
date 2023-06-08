@@ -309,7 +309,7 @@ class VQ_Quantizer(nn.Module):
             noise = torch.round(noise).to(torch.int32).to(embed_indices)
             new_embed_indices = embed_indices + noise
             new_embed_indices = torch.clamp(new_embed_indices, max=self._num_embed - 1, min=0)
-            embed_indices = new_embed_indices
+            # embed_indices = new_embed_indices
         # print("noise ",noise.shape)
         # print("both together",new_embed_indices)
         embed_Matrix = torch.zeros_like(dist)
@@ -635,7 +635,7 @@ class slidingWindow(Dataset):
         if self.data.shape[1] - index >= self.L:
             x = self.data[:, index:index + self.L]
             v = torch.sum(x / self.L, axis=1).unsqueeze(1)
-            x = x / v
+            x = x #/ v
             return (x, v)
 
     def __len__(self):

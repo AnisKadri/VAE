@@ -49,11 +49,11 @@ class VQ_gui(tk.Tk):
     # self.MI_scores = self.calculate_MI_score(self.mean)
 
     # create a DataLoader from mu and logvar for later generation
-    self.mu_loader = DataLoader(self.mu, #slidingWindow(self.mu, self.L),
+    self.mu_loader = DataLoader(slidingWindow(self.mu, self.L), #self.mu, #slidingWindow(self.mu, self.L),
                            batch_size=self.batch_size,
                            shuffle=False
                            )
-    self.logvar_loader = DataLoader(self.logvar, #slidingWindow(self.logvar, self.L),
+    self.logvar_loader = DataLoader(slidingWindow(self.logvar, self.L), #self.logvar, #slidingWindow(self.logvar, self.L),
                                batch_size=self.batch_size,
                                shuffle=False
                                )
@@ -329,20 +329,28 @@ class VQ_gui(tk.Tk):
     idx = 0
 
     # Init tensors to store results
-    x_rec = torch.empty(self.repetition, self.T, self.n_channels)
+    x_rec = torch.empty(self.repetition, self.L, self.n_channels)
 
     # Loop through data n times
     for i, (_mu, _logvar) in enumerate(zip(self.mu_loader, self.logvar_loader)):
       # get batch size (last batch may have a different size)
       bs = _mu.shape[0]
+      bs = self.L
+      print(bs)
       for j in range(self.repetition):
         # generate the batch reconstruction
         _z = self.model.reparametrization_trick(_mu, _logvar)
         _embed, _ = self.model.quantizer(_z)
         rec = self.model.decoder(_embed)
 
+
         # add the batch reconstruction to the main rec
-        x_rec[j, idx: idx + bs, :] = (rec * self.norm_vec[i])[:, :, 0]
+        # x_rec[j, idx: idx + bs, :] = (rec * self.norm_vec[i])[:, :, 0]
+        rec = torch.permute(rec, (0, 2, 1))
+        print("shape of x-rec", x_rec[j, idx: idx + bs, :].shape)
+        print("the rec to assign", rec[0, :, :].shape)
+        print("idx", idx, idx+bs)
+        x_rec[j, idx: idx + bs, :] = rec[0, :, :]
       idx += bs
 
     # Calculate the mean for mu, logvar, z and x_rec
@@ -380,10 +388,10 @@ class VQ_gui(tk.Tk):
   def sample_from_data_VQ(self, model, data, n):
     # Init tensors to store results
     model.eval()
-    x = torch.empty((self.T, self.n_channels))
-    mu, logvar, z, embed = (torch.empty((self.repetition, self.T, self.num_embed, self.latent_dims)) for _ in range(4))
-    x_rec = torch.empty(self.repetition, self.T, self.n_channels)
-    # print(x_rec.shape)
+    x = torch.empty((self.L, self.n_channels))
+    mu, logvar, z, embed = (torch.empty((self.repetition, self.L, self.num_embed, self.latent_dims)) for _ in range(4))
+    x_rec = torch.empty(self.repetition, self.L, self.n_channels)
+    print(x_rec.shape)
 
     # Init the normalisation vector and batch index
     norm_vec = []
@@ -393,6 +401,7 @@ class VQ_gui(tk.Tk):
     for i, (batch, v) in enumerate(data):
       # get batch size
       bs = batch.shape[0]
+      bs = self.L
       for j in range(n):
         # generate reconstruction and latent space over the x axis
         rec, loss, _mu, _logvar = model(batch)
@@ -404,7 +413,11 @@ class VQ_gui(tk.Tk):
           v = v.unsqueeze(-1)
           v = v.unsqueeze(-1)
         # print(v.shape)
-        # print(rec.shape)
+        rec = torch.permute(rec, (0, 2, 1))
+
+        print("rec", rec.shape)
+        print(bs)
+
 
         # Fill the Tensors with data Shape (mu, logvar,z): n*T*K*D, with K num of embeddings and D latent dims
         # x_rec = n*T*C
@@ -412,20 +425,23 @@ class VQ_gui(tk.Tk):
         logvar[ j, idx: idx + bs, :] = _logvar
         z[      j, idx: idx + bs, :] = _z
         embed[  j, idx: idx + bs, :] = _embed
-        x_rec[  j, idx: idx + bs, :] = (rec * v)[:, :, 0]
-      x[           idx: idx + bs, :] = (batch * v)[:, :, 0]  # Shape T*C
+        x_rec[  j, idx: idx + bs, :] = (rec )[:, :, :]
+      batch = torch.permute(batch, (0, 2, 1))
+      x[           idx: idx + bs, :] = (batch )[:, :, :]  # Shape T*C
 
       idx += bs
       # store the normalisation for each batch
       if self.norm_vec_filled == False:
         norm_vec.append(v)
-
+    print("rec1", x_rec.shape)
     # Calculate the mean for mu, logvar, z and x_rec
     mu, logvar, z, embed, x_rec_mean = (torch.mean(t, dim=0) for t in [mu, logvar, z, embed, x_rec])
-
+    print("rec2", x_rec_mean.shape)
     # reshape and squeeze x_rec so that n and C are merged and final shape is T * (C*n)
     x_rec = torch.permute(x_rec, (1, 0, 2))
-    x_rec = x_rec.reshape(self.T, -1)
+    print("rec3", x_rec.shape)
+    x_rec = x_rec.reshape(self.L, -1)
+    print("rec4", x_rec.shape)
 
     # convert to numpy, print shapes and output
     x, z, x_rec = (t.detach().numpy() for t in [x, z, x_rec])
@@ -484,19 +500,19 @@ class VQ_gui(tk.Tk):
 
 if __name__ == "__main__":
   n_channels = 1
-  latent_dims = 2
-  L = 60
-  i = 0
-  effect = "seasonality" # trend, seasonality, std_variation, trend_seasonality
+  latent_dims = 7
+  L = 3455
+  i = 8
+  effect = "seasonality" # trend, seasonality, std_variation, trend_seasonality, no_effect
 
 
   # x = torch.load(r'modules\data_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
   # params = torch.load(r'modules\params_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
   # v = torch.load(r'modules\vq_ema_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
 
-  x = torch.load(r'modules\data_{}_{}channels_{}latent_{}window_{}_NI.pt'.format(effect, n_channels,latent_dims, L, i))
-  params = torch.load(r'modules\params_{}_{}channels_{}latent_{}window_{}_NI.pt'.format(effect, n_channels,latent_dims, L, i))
-  v = torch.load(r'modules\vq_ema_{}_{}channels_{}latent_{}window_{}_NI.pt'.format(effect, n_channels,latent_dims, L, i))
+  x = torch.load(r'modules\data_{}_{}channels_{}latent_{}window_{}_no_norm.pt'.format(effect, n_channels,latent_dims, L, i))
+  params = torch.load(r'modules\params_{}_{}channels_{}latent_{}window_{}_no_norm.pt'.format(effect, n_channels,latent_dims, L, i))
+  v = torch.load(r'modules\vq_ema_{}_{}channels_{}latent_{}window_{}_no_norm.pt'.format(effect, n_channels,latent_dims, L, i))
 
 
 
