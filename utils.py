@@ -7,10 +7,10 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, TextBox, Button
-import ipywidgets as widgets
+# import ipywidgets as widgets
 from matplotlib.gridspec import GridSpec
-from ipywidgets import interact
-from IPython.display import display, clear_output
+# from ipywidgets import interact
+# from IPython.display import display, clear_output
 import matplotlib.gridspec as gridspec
 
 
