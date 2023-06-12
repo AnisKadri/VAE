@@ -9,7 +9,9 @@ import torch; torch.manual_seed(955)
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
+from dataGen import Gen
+import pprint
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -571,6 +573,7 @@ class TCVAE_Decoder(nn.Module):
 
         return mu, logvar
 
+
 class LongShort_TCVAE_Decoder(nn.Module):
     def __init__(self, input_size, num_layers, latent_dims, L=30, slope=0.2, first_kernel=None,
                  modified=True, reduction=False):
@@ -619,11 +622,12 @@ class LongShort_TCVAE_Decoder(nn.Module):
         #         print("Long Decoder mu: ", long_mu.shape)
 
         #         print("After Cat: ", mu.shape)
-        if self._reduction:
-            mu = self.reduction_layer(mu)
-            logvar = self.reduction_layer(logvar)
+        #         if self._reduction:
+        mu = self.reduction_layer(mu)
+        logvar = self.reduction_layer(logvar)
         x = self.reparametrization_trick(mu, logvar)
-        return x
+        #         print("Reconstruction at the end: ", x.shape)
+        return x, mu, logvar
 
 
 class slidingWindow(Dataset):
@@ -635,7 +639,7 @@ class slidingWindow(Dataset):
         if self.data.shape[1] - index >= self.L:
             x = self.data[:, index:index + self.L]
             v = torch.sum(x / self.L, axis=1).unsqueeze(1)
-            x = x #/ v
+            x = x / v
             return (x, v)
 
     def __len__(self):
@@ -690,10 +694,11 @@ def train(model, train_loader, criterion, optimizer, device, epoch, VQ=True):
     for batch_idx, (data, v) in enumerate(train_loader):
 
         data = data.to(device)
+        v = v.to(device)
         optimizer.zero_grad()
 
         if VQ:
-            x_rec, loss, mu, logvar = model(data)
+            x_rec, loss, mu, logvar, mu_rec, logvar_rec = model(data)
         else:
             #             x_rec, mu, logvar = model(data)
             x_rec, mu, logvar = sample_mean(model, data, 10)
@@ -746,3 +751,266 @@ def compare(dataset, model, VQ=True):
     plt.ylim(50, 600)
     plt.grid(True)
     plt.show()
+
+
+class Variational_Autoencoder(nn.Module):
+    def __init__(self, n_channels, num_layers, latent_dims, v_encoder, v_decoder,
+                 L=30,
+                 slope=0.2,
+                 first_kernel=None,
+                 ß=0.25,
+                 modified=True,
+                 reduction=False,
+                 ):
+        super(Variational_Autoencoder, self).__init__()
+
+        self._n_channels = n_channels
+        self._num_layers = num_layers
+        self._latent_dims = latent_dims
+        self._v_encoder = v_encoder
+        self._v_decoder = v_decoder
+        #         self._v_quantizer = v_quantizer
+        self._L = L
+        self._slope = slope
+        self._first_kernel = first_kernel
+        self._ß = ß
+        self._reduction = reduction
+        self._modified = modified
+        #         if self._modified:
+        #             self._num_embed = self._n_channels * 4 * self._num_layers
+        #         else:
+        #             self._num_embed = self._n_channels * 2
+        #         if self._reduction:
+        #             self._num_embed = self._num_embed // 2
+
+        self.encoder = self._v_encoder(self._n_channels, self._num_layers, self._latent_dims, self._L, self._slope,
+                                       self._first_kernel, self._modified, self._reduction)
+        self.decoder = self._v_decoder(self._n_channels, self._num_layers, self._latent_dims, self._L, self._slope,
+                                       self._first_kernel, self._modified, self._reduction)
+
+    #         self.quantizer = self._v_quantizer(self._num_embed, self._latent_dims, self._commit_loss, decay=0.99,
+    #                                            epsilon=1e-5)
+
+    #         self.bn = nn.BatchNorm1d(self._num_embed)
+
+    def reparametrization_trick(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def forward(self, x):
+        mu, logvar = self.encoder(x)
+        loss_kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+
+        z = self.reparametrization_trick(mu, logvar)
+        # print(z.shape)
+        # z = self.bn(self.quantizer._embedding.weight[None,:])
+        # is_larger = torch.all(torch.gt(z[0], self.quantizer._embedding.weight))
+        # print(z.shape)
+        # print("Is encoder output larger than the set of vectors?", is_larger)
+        #         e, loss_quantize = self.quantizer(z)
+
+        #         print("----------------Encoder Output-------------")
+        #         print("mu and logvar", mu.shape, logvar.shape)
+        #         print("----------------Reparametrization-------------")
+        #         print("Z", z.shape)
+        #         print("----------------Quantizer-------------")
+        #         print("quantized shape", e.shape)
+        #         print("loss shape", loss_quantize)
+
+        #         mu_dec, logvar_dec = self.decoder(e)
+        #         x_rec = self.reparametrization_trick(mu_dec, mu_dec)
+        x_rec, mu_rec, logvar_rec = self.decoder(z)
+
+        loss_rec = F.mse_loss(x_rec, x, reduction='sum')
+        loss = loss_rec + self._ß * loss_kld
+
+        #         print("----------------Decoding-------------")
+        #         print("----------------Decoder Output-------------")
+        #         # print("mu and logvar Decoder", mu_dec.shape, logvar_dec.shape)
+        #         print("rec shape", x_rec.shape)
+        return x_rec, loss, mu, logvar, mu_rec, logvar_rec
+
+
+def set_effect(effect):
+    if effect == "no_effect":
+        effects = {
+            "Pulse": {
+                "occurances": 0,
+                "max_amplitude": 1.5,
+                "interval": 40
+            },
+            "Trend": {
+                "occurances": 0,
+                "max_slope": 0.005,
+                "type": "linear"
+            },
+            "Seasonality": {
+                "occurances": 0,
+                "frequency_per_week": (7, 14),  # min and max occurances per week
+                "amplitude_range": (5, 20),
+            },
+            "std_variation": {
+                "occurances": 0,
+                "max_value": 10,
+                "interval": 1000,
+            },
+            "channels_coupling": {
+                "occurances": 0,
+                "coupling_strengh": 20
+            },
+            "Noise": {
+                "occurances": 0,
+                "max_slope": 0.005,
+                "type": "linear"
+            }
+        }
+    elif effect == "trend":
+        effects = {
+            "Pulse": {
+                "occurances": 0,
+                "max_amplitude": 1.5,
+                "interval": 40
+            },
+            "Trend": {
+                "occurances": 1,
+                "max_slope": 0.005,
+                "type": "linear"
+            },
+            "Seasonality": {
+                "occurances": 0,
+                "frequency_per_week": (7, 14),  # min and max occurances per week
+                "amplitude_range": (5, 20),
+            },
+            "std_variation": {
+                "occurances": 0,
+                "max_value": 10,
+                "interval": 1000,
+            },
+            "channels_coupling": {
+                "occurances": 0,
+                "coupling_strengh": 20
+            },
+            "Noise": {
+                "occurances": 0,
+                "max_slope": 0.005,
+                "type": "linear"
+            }
+        }
+    elif effect == "seasonality":
+        effects = {
+            "Pulse": {
+                "occurances": 0,
+                "max_amplitude": 1.5,
+                "interval": 40
+            },
+            "Trend": {
+                "occurances": 0,
+                "max_slope": 0.005,
+                "type": "linear"
+            },
+            "Seasonality": {
+                "occurances": 1,
+                "frequency_per_week": (7, 14),  # min and max occurances per week
+                "amplitude_range": (5, 20),
+            },
+            "std_variation": {
+                "occurances": 0,
+                "max_value": 10,
+                "interval": 1000,
+            },
+            "channels_coupling": {
+                "occurances": 0,
+                "coupling_strengh": 20
+            },
+            "Noise": {
+                "occurances": 0,
+                "max_slope": 0.005,
+                "type": "linear"
+            }
+        }
+
+    return effects
+def generate_data(n_channels, effect, L, periode=15, step=5, val=500 ):
+    effects = set_effect(effect)
+    X = Gen(periode, step, val, n_channels, effects)
+    x, params, e_params = X.parameters()
+    # pprint.pprint(params)
+    # pprint.pprint(e_params)
+    # X.show()
+    x = torch.FloatTensor(x)
+
+    # x = F.normalize(x, p=2, dim=1)
+    n = x.shape[1]
+    # L = 30
+
+    train_ = x[:, :int(0.8*n)]
+    val_   = x[:, int(0.8*n):int(0.9*n)]
+    test_  = x[:, int(0.9*n):]
+
+    train_data = DataLoader(slidingWindow(train_, L),
+                            batch_size= 22,# 59, # 22
+                            shuffle = False
+                            )
+    val_data = DataLoader(slidingWindow(val_, L),
+                            batch_size=22,
+                            shuffle = False
+                            )
+    test_data = DataLoader(slidingWindow(test_, L),
+                            batch_size=22,
+                            shuffle = False
+                            )
+    return X, train_data, test_data
+
+
+def train_on_effect(model, opt, device, n_channels=1, effect='no_effect', n_samples=10, epochs_per_sample=50):
+    L = model._L
+    latent_dims = model._latent_dims
+    for i in range(n_samples):
+        X, train_data, test_data = generate_data(n_channels, effect, L)
+        x, params, e_params = X.parameters()
+
+        for epoch in range(1, epochs_per_sample):
+            train(model, train_data, criterion, opt, device, epoch, VQ=True)
+        save(model, effect, n_channels, latent_dims, L, i)
+        save(params, effect, n_channels, latent_dims, L, i)
+        save(e_params, effect, n_channels, latent_dims, L, i)
+    return model, X, train_data
+
+def save(obj, effect, n_channels, latent_dims, L, i):
+    torch.save(obj, r'modules\data_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels, latent_dims, L, i))
+
+
+def get_average_norm_scale(train_data, model):
+    n_channels = model._n_channels
+    norm = torch.empty(n_channels, 0)
+
+    for i, (data, norm_scale) in enumerate(train_data):
+        reshaped_norm = norm_scale.permute(1, 0, 2).flatten(1)
+        norm = torch.cat((norm, reshaped_norm), 1)
+
+    avg_norm = torch.mean(norm, dim=1)
+    return avg_norm
+
+
+def get_latent_variables(train_data, model):
+    model.eval()
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    n_channels = model._n_channels
+    latent_dims = model._latent_dims
+
+    latents = torch.empty(n_channels, latent_dims, 0, device=device)
+
+    for i, (data, norm_scale) in enumerate(train_data):
+        data = data.to(device)
+
+        mu, logvar = model.encoder(data)
+        z = model.reparametrization_trick(mu, logvar)
+
+        reshaped_mu, reshaped_logvar, reshaped_z = (t.permute(1, 2, 0) for t in [mu, logvar, z])
+
+        latents = torch.cat((latents, reshaped_z), 2)
+
+    avg_latents = torch.mean(latents, dim=2)
+    return latents, avg_latents

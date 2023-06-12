@@ -4,271 +4,53 @@
 # In[11]:
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
-
-# get_ipython().run_line_magic('load_ext', 'autoreload')
-# get_ipython().run_line_magic('autoreload', '2')
-from dataGen import Gen
-from utils import compare, experiment
-from train import slidingWindow, criterion, train, test, objective, train_vae
-from Encoders import LongShort_TCVAE_Encoder, RnnEncoder, MST_VAE_Encoder, MST_VAE_Encoder_dist
-from Decoders import LongShort_TCVAE_Decoder, RnnDecoder, MST_VAE_Decoder, MST_VAE_Decoder_dist
-from vae import VariationalAutoencoder, VQ_MST_VAE, VQ_Quantizer
-
 import torch; torch.manual_seed(955)
 import torch.optim as optim
-import torch.distributions as D
-from torch.utils.data import DataLoader
+from VQ_EMA_fn import *
+
 # import optuna
 # from optuna.samplers import TPESampler
-# import torchaudio
 
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.distributions as D
-from torch.utils.data import DataLoader
-from torch.utils.data import Dataset
 
-import numpy as np
-import matplotlib.pyplot as plt
-import pprint
-from VQ_EMA_fn import *
-# all parameters for generating the time series should be configured in this cell
-periode = 15 #days
-step = 5 # mess interval in minutes
-val = 500
-n_channels = 1
-effects = {
-    "Pulse": {
-        "occurances":0,
-        "max_amplitude":1.5,   
-        "interval":40
-        },
-    "Trend": {
-        "occurances":0,
-        "max_slope":0.005,
-        "type":"linear"
-        },
-    "Seasonality": {
-        "occurances":0,
-        "frequency_per_week":(7, 14), # min and max occurances per week
-        "amplitude_range":(5, 20),
-        },
-    "std_variation": {
-        "occurances":0,
-        "max_value":10,
-        "interval":1000,
-        },
-    "channels_coupling":{
-        "occurances":0,
-        "coupling_strengh":20
-        },
-    "Noise": {
-        "occurances":0,
-        "max_slope":0.005,
-        "type":"linear"
-        }
-    }
 
 ### Init Model
+n_channels = 1
 latent_dims = 7 # 6 # 17
-L= 3455# 39 #32
+L= 600# 39 #32
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# v = vae(n_channels, L, latent_dims)
-# v = VariationalAutoencoder(input_size = n_channels,
-#                       hidden_size = 30,
-#                       num_layers = 3,
-#                       latent_dims= latent_dims,
-#                       v_encoder = LongShort_TCVAE_Encoder, #MST_VAE_Encoder, # RnnEncoder, LongShort_TCVAE_Encoder,
-#                       v_decoder = LongShort_TCVAE_Decoder, #MST_VAE_Decoder, # RnnDecoder, LongShort_TCVAE_Decoder,
-#                       L = L,
-#                       slope = 0.2,
-#                       first_kernel = 21)
-v = VQ_MST_VAE(n_channels = n_channels,
-                            num_layers =  2,#4, #3
+
+v = Variational_Autoencoder(n_channels = n_channels,
+                            num_layers =  3,#4, #3
                             latent_dims= latent_dims,
                             v_encoder = LongShort_TCVAE_Encoder, #MST_VAE_Encoder,
                             v_decoder = LongShort_TCVAE_Decoder, #MST_VAE_Decoder,
-                            v_quantizer = VQ_Quantizer,
                             L=L,
                             slope = 0,
-                            first_kernel = 20, #11, #20
-                            commit_loss = 0.25,
-                            modified= False,
-                            reduction=True
-               ) #10 5
+                            first_kernel = 60, #11, #20
+                            ß = 1.5,
+                            modified=False,
+                            reduction = True)
+# v = VQ_MST_VAE(n_channels = n_channels,
+#                             num_layers =  2,#4, #3
+#                             latent_dims= latent_dims,
+#                             v_encoder = LongShort_TCVAE_Encoder, #MST_VAE_Encoder,
+#                             v_decoder = LongShort_TCVAE_Decoder, #MST_VAE_Decoder,
+#                             v_quantizer = VQ_Quantizer,
+#                             L=L,
+#                             slope = 0,
+#                             first_kernel = 20, #11, #20
+#                             commit_loss = 0.25,
+#                             modified= False,
+#                             reduction=True
+#                ) #10 5
 
 v = v.to(device)
 opt = optim.Adam(v.parameters(), lr = 0.005043529186448577) # 0.005043529186448577 0.006819850049647945
 
-
-def sample_and_train(effects, n_channels, periode, step, val, latent_dims, L, naming):
-    # global test_data
-    for i in range(1, 11):
-        X = Gen(periode, step, val, n_channels, effects)
-        x, params, e_params = X.parameters()
-        pprint.pprint(params)
-        pprint.pprint(e_params)
-        # X.show()
-        x = torch.FloatTensor(x)
-        n = x.shape[1]
-
-        train_ = x[:, :int(0.8 * n)]
-        val_ = x[:, int(0.8 * n):int(0.9 * n)]
-        test_ = x[:, int(0.9 * n):]
-
-        train_data = DataLoader(slidingWindow(train_, L),
-                                batch_size=22,  # 59, # 22
-                                shuffle=False
-                                )
-        val_data = DataLoader(slidingWindow(val_, L),
-                              batch_size=22,
-                              shuffle=False
-                              )
-        test_data = DataLoader(slidingWindow(test_, L),
-                               batch_size=22,
-                               shuffle=False
-                               )
-
-        for epoch in range(1, 5000//i):
-            train(v, train_data, criterion, opt, device, epoch, VQ=True)
-
-        torch.save(x, r'modules\data_{}_{}channels_{}latent_{}window_{}_no_norm.pt'.format(naming, n_channels, latent_dims, L, i))
-        torch.save(params,
-                   r'modules\params_{}_{}channels_{}latent_{}window_{}_no_norm.pt'.format(naming, n_channels, latent_dims, L, i))
-        torch.save(v, r'modules\vq_ema_{}_{}channels_{}latent_{}window_{}_no_norm.pt'.format(naming, n_channels, latent_dims, L, i))
-
-
-sample_and_train(effects, n_channels, periode, step, val, latent_dims, L, naming="no_effect")
-effects = {
-    "Pulse": {
-        "occurances":0,
-        "max_amplitude":1.5,
-        "interval":40
-        },
-    "Trend": {
-        "occurances":1,
-        "max_slope":0.005,
-        "type":"linear"
-        },
-    "Seasonality": {
-        "occurances":0,
-        "frequency_per_week":(7, 14), # min and max occurances per week
-        "amplitude_range":(5, 20),
-        },
-    "std_variation": {
-        "occurances":0,
-        "max_value":10,
-        "interval":1000,
-        },
-    "channels_coupling":{
-        "occurances":0,
-        "coupling_strengh":20
-        },
-    "Noise": {
-        "occurances":0,
-        "max_slope":0.005,
-        "type":"linear"
-        }
-    }
-sample_and_train(effects, n_channels, periode, step, val, latent_dims, L, naming="trend")
-effects = {
-    "Pulse": {
-        "occurances":0,
-        "max_amplitude":1.5,
-        "interval":40
-        },
-    "Trend": {
-        "occurances":0,
-        "max_slope":0.005,
-        "type":"linear"
-        },
-    "Seasonality": {
-        "occurances":1,
-        "frequency_per_week":(7, 14), # min and max occurances per week
-        "amplitude_range":(5, 20),
-        },
-    "std_variation": {
-        "occurances":0,
-        "max_value":10,
-        "interval":1000,
-        },
-    "channels_coupling":{
-        "occurances":0,
-        "coupling_strengh":20
-        },
-    "Noise": {
-        "occurances":0,
-        "max_slope":0.005,
-        "type":"linear"
-        }
-    }
-sample_and_train(effects, n_channels, periode, step, val, latent_dims, L, naming="seasonality")
-# effects = {
-#     "Pulse": {
-#         "occurances":0,
-#         "max_amplitude":1.5,
-#         "interval":40
-#         },
-#     "Trend": {
-#         "occurances":0,
-#         "max_slope":0.005,
-#         "type":"linear"
-#         },
-#     "Seasonality": {
-#         "occurances":0,
-#         "frequency_per_week":(7, 14), # min and max occurances per week
-#         "amplitude_range":(5, 20),
-#         },
-#     "std_variation": {
-#         "occurances":1,
-#         "max_value":10,
-#         "interval":1000,
-#         },
-#     "channels_coupling":{
-#         "occurances":0,
-#         "coupling_strengh":20
-#         },
-#     "Noise": {
-#         "occurances":0,
-#         "max_slope":0.005,
-#         "type":"linear"
-#         }
-#     }
-# sample_and_train(effects, n_channels, periode, step, val, latent_dims, L, naming="std_variation")
-# effects = {
-#     "Pulse": {
-#         "occurances":0,
-#         "max_amplitude":1.5,
-#         "interval":40
-#         },
-#     "Trend": {
-#         "occurances":1,
-#         "max_slope":0.005,
-#         "type":"linear"
-#         },
-#     "Seasonality": {
-#         "occurances":1,
-#         "frequency_per_week":(7, 14), # min and max occurances per week
-#         "amplitude_range":(5, 20),
-#         },
-#     "std_variation": {
-#         "occurances":0,
-#         "max_value":10,
-#         "interval":1000,
-#         },
-#     "channels_coupling":{
-#         "occurances":0,
-#         "coupling_strengh":20
-#         },
-#     "Noise": {
-#         "occurances":0,
-#         "max_slope":0.005,
-#         "type":"linear"
-#         }
-#     }
-# sample_and_train(effects, n_channels, periode, step, val, latent_dims, L, naming="trend_seasonality")
-# In[19]:
+v, X, train_data = train_on_effect(v, opt, device, effect='no_effect', n_samples=10)
+v, X, train_data = train_on_effect(v, opt, device, effect='trend', n_samples=10)
+v, X, train_data = train_on_effect(v, opt, device, effect='seasonality', n_samples=10)
 
 
 def compare(dataset, model, VQ=True):
