@@ -972,13 +972,14 @@ def train_on_effect(model, opt, device, n_channels=1, effect='no_effect', n_samp
 
         for epoch in range(1, epochs_per_sample):
             train(model, train_data, criterion, opt, device, epoch, VQ=True)
-        save(model, effect, n_channels, latent_dims, L, i)
-        save(params, effect, n_channels, latent_dims, L, i)
-        save(e_params, effect, n_channels, latent_dims, L, i)
+        save(x, "data", effect, n_channels, latent_dims, L, i)
+        save(params, "params", effect, n_channels, latent_dims, L, i)
+        save(e_params, "e_params", effect, n_channels, latent_dims, L, i)
+        save(model, "model", effect, n_channels, latent_dims, L, i)
     return model, X, train_data
 
-def save(obj, effect, n_channels, latent_dims, L, i):
-    torch.save(obj, r'modules\data_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels, latent_dims, L, i))
+def save(obj, name, effect, n_channels, latent_dims, L, i):
+    torch.save(obj, r'modules\{}_{}_{}channels_{}latent_{}window_{}.pt'.format(name, effect, n_channels, latent_dims, L, i))
 
 
 def get_average_norm_scale(train_data, model):

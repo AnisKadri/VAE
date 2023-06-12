@@ -16,7 +16,7 @@ from VQ_EMA_fn import *
 ### Init Model
 n_channels = 1
 latent_dims = 7 # 6 # 17
-L= 600# 39 #32
+L= 60# 39 #32
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
@@ -27,7 +27,7 @@ v = Variational_Autoencoder(n_channels = n_channels,
                             v_decoder = LongShort_TCVAE_Decoder, #MST_VAE_Decoder,
                             L=L,
                             slope = 0,
-                            first_kernel = 60, #11, #20
+                            first_kernel = 15, #11, #20
                             ß = 1.5,
                             modified=False,
                             reduction = True)

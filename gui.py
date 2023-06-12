@@ -26,15 +26,18 @@ class VQ_gui(tk.Tk):
     self.model.eval()
     self.spinboxs, self.double_vars = [], []
     self.norm_vec_filled = False
+    self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # Get the model parameters
     self.L              = self.model._L
     self.T              = self.data.dataset.data.shape[1]- self.L     # last window is removed because for each window we sample only 1 mu/logvar/z etc
     self.batch_size     = self.data.batch_size
     self.n_channels     = self.model._n_channels
-    self.num_embed       = self.model._num_embed
-    self.latent_dims    = self.model._latent_dims
-    self.code_book      = deepcopy(self.model.quantizer._embedding.weight.data)
+    self.latent_dims = self.model._latent_dims
+    self.norm, self.avg_norm = self.get_average_norm_scale(data, v)
+    self.latents, self.avg_latents = self.get_latent_variables(data, v)
+    self.num_embed       = self.model._n_channels
+    self.code_book      = deepcopy(self.avg_latents)
     self.code_book_np   = self.code_book.detach().numpy()
     self.changed = []
 
@@ -43,8 +46,10 @@ class VQ_gui(tk.Tk):
     self.cov = params["cov"].squeeze()[:self.T]
 
     # Sample x, x_rec and the latent space
-    self.x, self.mu, self.logvar, self.z, self.embed, self.x_rec, self.x_rec_mean, self.norm_vec = self.sample_from_data_VQ(model, data, repetition)
-    print("embed shape", self.embed.shape)
+    self.x, self.x_rec, self.x_rec_mean, self.mu, self.logvar, mu_dec_mean, logvar_dec_mean = self.sample_vae()
+
+    # self.x, self.mu, self.logvar, self.z, self.embed, self.x_rec, self.x_rec_mean, self.norm_vec = self.sample_from_data_VQ(model, data, repetition)
+    # print("embed shape", self.embed.shape)
 
     # self.MI_scores = self.calculate_MI_score(self.mean)
 
@@ -59,7 +64,7 @@ class VQ_gui(tk.Tk):
                                )
 
     # create window and frames layout
-    button_frame, grid_frame, heatmap_frame, plot_frame= self.create_frames()
+    button_frame, grid_frame, heatmap_frame, plot_frame, latent_plot_frame= self.create_frames()
 
     # Create the text input widgets
     self.create_spinboxes(grid_frame)
@@ -68,7 +73,8 @@ class VQ_gui(tk.Tk):
     self.create_buttons(button_frame)
 
     # create plot
-    self.ax_plot, self.rec_lines, self.rec_lines_mean, self.plot_canvas = self.create_plot(plot_frame)
+    self.ax_plot, self.plot_canvas = self.create_plot(plot_frame, self.plot_reconstruction, self.x, self.x_rec, self.x_rec_mean)
+    self.latent_plot, self.plot_canvas = self.create_plot(latent_plot_frame, self.plot_latents, self.mu, self.logvar, self.norm)
 
     # create heatmap
     self.ax_heatmap, self.heatmap, self.heatmap_canvas = self.create_heatmap(heatmap_frame)
@@ -76,13 +82,48 @@ class VQ_gui(tk.Tk):
     # create scatter
     # self.ax_scatter, self.scatter, self.scatter_canvas = self.create_scatter(scatter_frame, 10)
 
+  def get_average_norm_scale(self,train_data, model):
+      n_channels = model._n_channels
+      norm = torch.empty(n_channels, 0)
 
+      for i, (data, norm_scale) in enumerate(train_data):
+        reshaped_norm = norm_scale.permute(1, 0, 2).flatten(1)
+        norm = torch.cat((norm, reshaped_norm), 1)
+
+      avg_norm = torch.mean(norm, dim=1)
+      print(norm.shape)
+      return  norm, avg_norm,
+
+  def get_latent_variables(self, train_data, model):
+    model.eval()
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    n_channels = model._n_channels
+    latent_dims = model._latent_dims
+    x_len = len(train_data.dataset)
+
+    latents = torch.empty(n_channels, latent_dims, 0, device=device)
+
+    for i, (data, norm_scale) in enumerate(train_data):
+      data = data.to(device)
+
+      mu, logvar = model.encoder(data)
+      z = model.reparametrization_trick(mu, logvar)
+
+      reshaped_mu, reshaped_logvar, reshaped_z = (t.permute(1, 2, 0) for t in [mu, logvar, z])
+
+      latents = torch.cat((latents, reshaped_z), 2)
+
+    avg_latents = torch.mean(latents, dim=2)
+    latents = latents.view(-1, x_len)
+    print("latents", latents.shape)
+    return latents, avg_latents
 
 
   def create_heatmap(self, heatmap_frame):
     fig = Figure(figsize=(8, 6), dpi=100)
     ax_heatmap = fig.add_subplot(111)
-    heatmap = self.plot_heatmap(ax_heatmap, self.code_book)
+    heatmap = self.plot_heatmap(ax_heatmap, self.avg_latents * self.avg_norm)
     heatmap_canvas = FigureCanvasTkAgg(fig, master=heatmap_frame)
     heatmap_canvas.draw()
     heatmap_canvas.get_tk_widget().pack(fill="both", expand=True)
@@ -92,10 +133,10 @@ class VQ_gui(tk.Tk):
 
     return ax_heatmap, heatmap, heatmap_canvas
 
-  def create_plot(self, plot_frame):
-    fig = Figure(figsize=(10,4), dpi=100)
+  def create_plot(self, plot_frame, plot_fn, *args):
+    fig = Figure(figsize=(8,4), dpi=100)
     ax_plot = fig.add_subplot(111)
-    rec_lines, rec_lines_mean = self.plot_reconstruction(ax_plot, self.x, self.x_rec, self.x_rec_mean)
+    plot_fn(ax_plot, *args)
     ax_plot.set_xlabel('Time')
     ax_plot.set_ylabel('Values')
 
@@ -115,7 +156,7 @@ class VQ_gui(tk.Tk):
     plot_canvas.mpl_connect("key_press_event", toolbar.pan)
     plot_canvas.mpl_connect("key_release_event", toolbar.pan)
 
-    return ax_plot, rec_lines, rec_lines_mean, plot_canvas
+    return ax_plot, plot_canvas
 
   def create_scatter(self, scatter_frame, k):
     fig = Figure(figsize=(6,4), dpi=100)
@@ -161,14 +202,53 @@ class VQ_gui(tk.Tk):
     self.reset_button.pack(side="top", padx=5, pady=5, fill="x")
     self.reset_button.bind("<Button-1>", self.reset)
 
+    # File name for saving
+    save_label = tk.Label(button_frame, text="model_name")
+    save_label.pack(side=TOP)
+    self.file_name = tk.Entry(button_frame)
+    self.file_name.pack(side="top", padx=5, pady=5, fill="x")
+
+
     # Save Button
     self.save_button = tk.Button(button_frame, text="Save Model")
     self.save_button.pack(side="top", padx=5, pady=5, fill="x")
     self.save_button.bind("<Button-1>", self.save)
 
-    # File name for saving
-    self.file_name = tk.Entry(button_frame)
-    self.file_name.pack(side="top", padx=5, pady=5, fill="x")
+    # parameters for loading model: n_channel
+    n_channels_label = tk.Label(button_frame, text="n_channels")
+    n_channels_label.pack(side=TOP)
+    self.load_channels = tk.Entry(button_frame)
+    self.load_channels.insert(0, "1")
+    self.load_channels.pack(side="top", padx=5, pady=5, fill="x")
+
+    window_label = tk.Label(button_frame, text="window Length")
+    window_label.pack(side=TOP)
+    self.load_window = tk.Entry(button_frame)
+    self.load_window.insert(0, "600")
+    self.load_window.pack(side="top", padx=5, pady=5, fill="x")
+
+    effect_label = tk.Label(button_frame, text="Effect")
+    effect_label.pack(side=TOP)
+    self.load_effect = tk.Entry(button_frame)
+    self.load_effect.insert(0, "trend")
+    self.load_effect.pack(side="top", padx=5, pady=5, fill="x")
+
+    latent_label = tk.Label(button_frame, text="Latent space Dim")
+    latent_label.pack(side=TOP)
+    self.load_dims = tk.Entry(button_frame)
+    self.load_dims.insert(0, "7")
+    self.load_dims.pack(side="top", padx=5, pady=5, fill="x")
+
+    number_label = tk.Label(button_frame, text="Model Number")
+    number_label.pack(side=TOP)
+    self.load_number = tk.Entry(button_frame)
+    self.load_number.insert(0, "0")
+    self.load_number.pack(side="top", padx=5, pady=5, fill="x")
+
+    # Load Button
+    self.load_button = tk.Button(button_frame, text="Load Model")
+    self.load_button.pack(side="top", padx=5, pady=5, fill="x")
+    self.load_button.bind("<Button-1>", self.load)
 
   def create_spinboxes(self, grid_frame):
     for col in range(self.latent_dims):
@@ -181,7 +261,8 @@ class VQ_gui(tk.Tk):
         self.spinbox.grid(row=row, column=col, sticky="NSEW")
 
         # set initial value
-        initial_value = self.code_book_np[row][col]
+        initial_value = (self.code_book_np * self.avg_norm.detach().numpy())[row][col]
+
         self.double_var.set(initial_value)
 
         # add the spinbox double var (variable to change the value) to a list
@@ -204,12 +285,12 @@ class VQ_gui(tk.Tk):
     plot_frame = tk.Frame(parent_frame)
     plot_frame.grid(row=0, column=0, sticky="nsew")
 
-    # scatter_frame = tk.Frame(parent_frame)
-    # scatter_frame.grid(row=0, column=1, sticky="nsew")
+    latent_plot_frame = tk.Frame(parent_frame)
+    latent_plot_frame.grid(row=0, column=2, sticky="nsew")
 
     # create buttons frame
     button_frame = tk.Frame(parent_frame)
-    button_frame.grid(row=0, column=1, sticky="nsew")
+    button_frame.grid(row=0, column=4, sticky="nsew")
 
     # create bottom frame for inputs and heatmap
     bottom_frame = tk.Frame(self)
@@ -225,11 +306,11 @@ class VQ_gui(tk.Tk):
     grid_frame = tk.Frame(bottom_frame, padx=10, pady=10)
     grid_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=1)
 
-    return button_frame, grid_frame, heatmap_frame, plot_frame#, scatter_frame
+    return button_frame, grid_frame, heatmap_frame, plot_frame, latent_plot_frame#, scatter_frame
 
   def plot_heatmap(self, ax_heatmap, codebook):
     ax_heatmap.clear()
-    heatmap = ax_heatmap.imshow(codebook)
+    heatmap = ax_heatmap.imshow(codebook.T)
     ax_heatmap.set_title('Codebook Heatmap')
     ax_heatmap
 
@@ -268,8 +349,9 @@ class VQ_gui(tk.Tk):
 
   def plot_reconstruction(self, ax_plot, x, x_rec, x_rec_mean):
     ax_plot.clear()
-    ax_plot.plot(x, "b", alpha=0.2)
-    rec_lines = ax_plot.plot(x_rec, "orange", alpha=0.2)
+    ax_plot.plot(x.T, "b", alpha=0.2)
+
+    rec_lines = ax_plot.plot(x_rec.T, "orange", alpha=0.2)
     rec_lines_mean = ax_plot.plot(x_rec_mean, "r")
     # Create custom legend handles and labels
     blue_handle = plt.Line2D([], [], color='b', label='Original Data')
@@ -278,7 +360,27 @@ class VQ_gui(tk.Tk):
     ax_plot.legend(handles=[blue_handle, red_handle], loc="upper right")
     ax_plot.grid()
 
-    return rec_lines, rec_lines_mean
+  def plot_latents(self, latent_plot, mus, logvars, norm):
+    mus = mus.view(-1, len(self.data.dataset))
+    logvars = logvars.view(-1, len(self.data.dataset))
+    print(mus.shape)
+    # print(norm.shape)
+    # print("latent mal norm", (latents* norm.squeeze(0)).shape)
+    # print(latents)
+    latent_plot.clear()
+    # for latent in latents:
+    latent_plot.plot((mus* norm.squeeze(0)).T, alpha = 0.3)
+    latent_plot.plot((logvars * norm.squeeze(0)).T, alpha=0.3)
+
+    # rec_lines = latent_plot.plot(x_rec.T, "orange", alpha=0.2)
+    # rec_lines_mean = latent_plot.plot(x_rec_mean, "r")
+    # Create custom legend handles and labels
+    # blue_handle = plt.Line2D([], [], color='b', label='Original Data')
+    # red_handle = plt.Line2D([], [], color='r', label='Reconstructions mean')
+    latent_plot.set_title('latent_variables')
+    # latent_plot.legend(handles=[blue_handle, red_handle], loc="upper right")
+    latent_plot.grid()
+
 
   def set_spinbox_value(self, event, row, col):
     try:
@@ -294,6 +396,41 @@ class VQ_gui(tk.Tk):
   def save(self, event):
     torch.save(self.model, r'modules\{}.pt'.format(self.file_name.get()))
     print("Saved")
+
+  def load(self, event):
+    print(r'modules\data_{}_{}channels_{}latent_{}window_{}.pt'.format(self.load_effect.get(), self.load_channels.get(), self.load_dims.get(), self.load_window.get(), self.load_number.get()))
+    try:
+      x = torch.load(r'modules\data_{}_{}channels_{}latent_{}window_{}.pt'.format(self.load_effect.get(), self.load_channels.get(), self.load_dims.get(), self.load_window.get(), self.load_number.get()))
+      params = torch.load(r'modules\params_{}_{}channels_{}latent_{}window_{}.pt'.format(self.load_effect.get(), self.load_channels.get(), self.load_dims.get(), self.load_window.get(), self.load_number.get()))
+      v = torch.load(r'modules\model_{}_{}channels_{}latent_{}window_{}.pt'.format(self.load_effect.get(), self.load_channels.get(), self.load_dims.get(), self.load_window.get(), self.load_number.get()))
+    except:
+      print("model doesn't exist")
+      return
+    x = torch.FloatTensor(x)
+
+    L = v._L
+    latent_dims = v._latent_dims
+    batch_size = self.batch_size
+    n = x.shape[1]
+
+    train_ = x[:, :int(0.8 * n)]
+    val_ = x[:, int(0.8 * n):int(0.9 * n)]
+    test_ = x[:, int(0.9 * n):]
+    train_data = DataLoader(slidingWindow(train_, L),
+                            batch_size=batch_size,
+                            shuffle=False
+                            )
+    val_data = DataLoader(slidingWindow(val_, L),
+                          batch_size=batch_size,
+                          shuffle=False
+                          )
+    test_data = DataLoader(slidingWindow(test_, L),
+                           batch_size=batch_size,
+                           shuffle=False
+                           )
+    self.destroy()  # Destroy the existing frame and its contents
+    self.__init__(v, train_data, params, self.repetition)
+    print("Loaded")
 
   def reset(self, event):
     self.model.quantizer._embedding.weight = nn.Parameter(self.code_book)
@@ -385,6 +522,53 @@ class VQ_gui(tk.Tk):
     return new_code_book
 
   @torch.no_grad()
+  def sample_vae(self):
+    x_len = len(self.data.dataset)
+
+    x_rec, mu_dec, logvar_dec = (torch.empty(0, self.n_channels, x_len, device=self.device) for _ in range(3))
+    mu_enc, logvar_enc = (torch.empty(0, self.n_channels, self.latent_dims, x_len, device=self.device) for _ in range(2))
+
+    for j in range(self.repetition):
+      # create temp tensors to store data in each repetition
+      x, x_rec_temp, mu_rec_temp, logvar_rec_temp = (torch.empty(self.n_channels, 0, device=self.device) for _ in range(4))
+      mu_temp, logvar_temp = (torch.empty(self.n_channels, self.latent_dims, 0, device=self.device) for _ in range(2))
+
+      for i, (batch, norm_scale) in enumerate(self.data):
+        batch = batch.to(self.device)
+        # sample from model
+        rec, loss, _mu, _logvar, mu_rec, logvar_rec = self.model(batch)
+
+        # reshape data -> (Channel, latent_dims, BS) or (Channel, BS)
+        _mu, _logvar = (t.permute(1, 2, 0) for t in [_mu, _logvar])
+        batch, rec, norm_scale, mu_rec, logvar_rec = (t.permute(1, 0, 2)[:, :, 0] for t in
+                                               [batch, rec, norm_scale, mu_rec, logvar_rec])
+
+        # Temp store data
+        mu_temp = torch.cat((mu_temp, _mu), dim=2)
+        logvar_temp = torch.cat((logvar_temp, _logvar), dim=2)
+        mu_rec_temp = torch.cat((mu_rec_temp, mu_rec * norm_scale), dim=1)
+        logvar_rec_temp = torch.cat((logvar_rec_temp, logvar_rec * norm_scale), dim=1)
+        x_rec_temp = torch.cat((x_rec_temp, rec * norm_scale), dim=1)
+        x = torch.cat((x, batch*norm_scale), dim=1)
+
+      # Store data after each reconstruction
+      x_rec = torch.cat((x_rec, x_rec_temp.unsqueeze(0)), dim=0)
+      mu_dec = torch.cat((mu_dec, mu_rec_temp.unsqueeze(0)), dim=0)
+      logvar_dec = torch.cat((logvar_dec, logvar_rec_temp.unsqueeze(0)), dim=0)
+      mu_enc = torch.cat((mu_enc, mu_temp.unsqueeze(0)), dim=0)
+      logvar_enc = torch.cat((logvar_enc, logvar_temp.unsqueeze(0)), dim=0)
+
+    # join repetition and Channels and get the mean
+    x_rec, mu_dec, logvar_dec = (t.view(-1, x_len) for t in [x_rec, mu_dec, logvar_dec])
+    x_rec_mean, mu_enc_mean, logvar_enc_mean, mu_dec_mean, logvar_dec_mean = (torch.mean(t, dim=0, keepdim=True) for t in
+                                                                              [x_rec, mu_enc, logvar_enc, mu_dec,
+                                                                               logvar_dec])
+    x_rec_mean = x_rec.mean(0)
+
+    return x, x_rec, x_rec_mean, mu_enc_mean, logvar_enc_mean, mu_dec_mean, logvar_dec_mean
+
+
+  @torch.no_grad()
   def sample_from_data_VQ(self, model, data, n):
     # Init tensors to store results
     model.eval()
@@ -401,12 +585,12 @@ class VQ_gui(tk.Tk):
     for i, (batch, v) in enumerate(data):
       # get batch size
       bs = batch.shape[0]
-      bs = self.L
+      # bs = self.L
       for j in range(n):
         # generate reconstruction and latent space over the x axis
-        rec, loss, _mu, _logvar = model(batch)
-        _z = model.reparametrization_trick(_mu, _logvar)
-        _embed, _ = model.quantizer(_z)
+        rec, loss, _mu, _logvar, mu_rec, logvar_rec = model(batch)
+        # _z = model.reparametrization_trick(_mu, _logvar)
+        # _embed, _ = model.quantizer(_z)
         # print(v.shape)
         # normalization
         if v.dim() == 1:
@@ -423,8 +607,8 @@ class VQ_gui(tk.Tk):
         # x_rec = n*T*C
         mu[     j, idx: idx + bs, :] = _mu
         logvar[ j, idx: idx + bs, :] = _logvar
-        z[      j, idx: idx + bs, :] = _z
-        embed[  j, idx: idx + bs, :] = _embed
+        # z[      j, idx: idx + bs, :] = _z
+        # embed[  j, idx: idx + bs, :] = _embed
         x_rec[  j, idx: idx + bs, :] = (rec )[:, :, :]
       batch = torch.permute(batch, (0, 2, 1))
       x[           idx: idx + bs, :] = (batch )[:, :, :]  # Shape T*C
@@ -501,24 +685,25 @@ class VQ_gui(tk.Tk):
 if __name__ == "__main__":
   n_channels = 1
   latent_dims = 7
-  L = 3455
-  i = 8
-  effect = "seasonality" # trend, seasonality, std_variation, trend_seasonality, no_effect
+  L = 60
+  i = 0
+  effect = "no_effect" # trend, seasonality, std_variation, trend_seasonality, no_effect
 
 
   # x = torch.load(r'modules\data_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
   # params = torch.load(r'modules\params_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
   # v = torch.load(r'modules\vq_ema_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
 
-  x = torch.load(r'modules\data_{}_{}channels_{}latent_{}window_{}_no_norm.pt'.format(effect, n_channels,latent_dims, L, i))
-  params = torch.load(r'modules\params_{}_{}channels_{}latent_{}window_{}_no_norm.pt'.format(effect, n_channels,latent_dims, L, i))
-  v = torch.load(r'modules\vq_ema_{}_{}channels_{}latent_{}window_{}_no_norm.pt'.format(effect, n_channels,latent_dims, L, i))
+  x = torch.load(r'modules\data_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
+  params = torch.load(r'modules\params_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
+  v = torch.load(r'modules\model_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
 
 
-
-  x = torch.FloatTensor(x)
+  print(x)
   print(params)
   print(v)
+  x = torch.FloatTensor(x)
+
   L = v._L
   latent_dims = v._latent_dims
   batch_size = 22
