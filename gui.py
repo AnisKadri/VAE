@@ -19,10 +19,10 @@ warnings.simplefilter("ignore", UserWarning)
 
 class VQ_gui(tk.Tk):
   @torch.no_grad()
-  def __init__(self, model, data, params, repetition):
+  def __init__(self, model, data, params, repetition, VQ):
     super().__init__()
     # Init variable vor the Gui
-    self.model, self.data, self.params, self.repetition = model, data, params, repetition
+    self.model, self.data, self.params, self.repetition, self.VQ = model, data, params, repetition, VQ
     self.model.eval()
     self.spinboxs, self.double_vars = [], []
     self.norm_vec_filled = False
@@ -92,7 +92,7 @@ class VQ_gui(tk.Tk):
 
       avg_norm = torch.mean(norm, dim=1)
       print(norm.shape)
-      return  norm, avg_norm,
+      return  norm, avg_norm
 
   def get_latent_variables(self, train_data, model):
     model.eval()
@@ -256,7 +256,7 @@ class VQ_gui(tk.Tk):
         self.double_var = tk.DoubleVar()
         # create the Spinbox and link it to the DoubleVar
         self.spinbox = Spinbox(grid_frame, from_=-500.0, to=500, increment=0.2, textvariable=self.double_var,
-                               command=lambda: self.sample_from_codebook(row, col))
+                               command=lambda idx=row, idy=col:  self.sample_from_codebook(idx, idy) if self.VQ else self.sample_vae_latent(idx, idy))
         # self.spinbox.bind('<Return>', self.set_spinbox_value(row, col))
         self.spinbox.grid(row=row, column=col, sticky="NSEW")
 
@@ -560,12 +560,88 @@ class VQ_gui(tk.Tk):
 
     # join repetition and Channels and get the mean
     x_rec, mu_dec, logvar_dec = (t.view(-1, x_len) for t in [x_rec, mu_dec, logvar_dec])
+    mu_enc, logvar_enc =(t.view(-1, latent_dims, x_len) for t in [mu_enc, logvar_enc])
     x_rec_mean, mu_enc_mean, logvar_enc_mean, mu_dec_mean, logvar_dec_mean = (torch.mean(t, dim=0, keepdim=True) for t in
                                                                               [x_rec, mu_enc, logvar_enc, mu_dec,
                                                                                logvar_dec])
     x_rec_mean = x_rec.mean(0)
 
     return x, x_rec, x_rec_mean, mu_enc_mean, logvar_enc_mean, mu_dec_mean, logvar_dec_mean
+
+  @torch.no_grad()
+  def sample_vae_latent(self, row, col):
+    print(self.mu.shape, self.logvar.shape)
+    print(torch.ones_like(self.mu[row, col, :]).shape)
+    x_len = len(self.data.dataset)
+    self.mu[row, col, :] += torch.ones_like(self.mu[row, col, :])
+    self.mu = torch.FloatTensor(self.mu)
+    print(self.mu.shape)
+
+    x_rec, mu_dec, logvar_dec = (torch.empty(0, self.n_channels, x_len, device=self.device) for _ in range(3))
+
+    z_enc = torch.empty(0, self.n_channels, self.latent_dims, x_len, device=self.device)
+
+    mu_loader = DataLoader(slidingWindow(self.mu, self.L),
+               batch_size=self.batch_size,
+               shuffle=False
+               )
+    logvar_loader = DataLoader(slidingWindow(self.logvar, self.L),
+               batch_size=self.batch_size,
+               shuffle=False
+               )
+    # Loop through data n times
+    for j in range(self.repetition):
+      # create temp tensors to store data in each repetition
+      x_rec_temp, mu_rec_temp, logvar_rec_temp = (torch.empty(self.n_channels, 0, device=self.device) for _ in
+                                                     range(3))
+      z_temp = torch.empty(self.n_channels, self.latent_dims, 0, device=self.device)
+
+      for i, (_mu, _logvar) in enumerate(zip(mu_loader, logvar_loader)):
+        _mu = _mu.to(self.device)
+        _logvar = _logvar.to(self.device)
+        z = self.model.reparametrization_trick(_mu, _logvar)
+        # sample from model
+        rec, mu_rec, logvar_rec = self.model.decoder(z)
+        # rec, loss, _mu, _logvar, mu_rec, logvar_rec = self.model(batch)
+
+        # reshape data -> (Channel, latent_dims, BS) or (Channel, BS)
+        z = z.permute(1, 2, 0)
+        rec, norm_scale, mu_rec, logvar_rec = (t.permute(1, 0, 2)[:, :, 0] for t in
+                                                      [rec, norm_scale, mu_rec, logvar_rec])
+
+        # Temp store data
+        z_temp = torch.cat((z_temp, z), dim=2)
+        # logvar_temp = torch.cat((logvar_temp, _logvar), dim=2)
+        mu_rec_temp = torch.cat((mu_rec_temp, mu_rec * norm_scale), dim=1)
+        logvar_rec_temp = torch.cat((logvar_rec_temp, logvar_rec * norm_scale), dim=1)
+        x_rec_temp = torch.cat((x_rec_temp, rec * norm_scale), dim=1)
+        # x = torch.cat((x, batch * norm_scale), dim=1)
+
+      # Store data after each reconstruction
+      x_rec = torch.cat((x_rec, x_rec_temp.unsqueeze(0)), dim=0)
+      mu_dec = torch.cat((mu_dec, mu_rec_temp.unsqueeze(0)), dim=0)
+      logvar_dec = torch.cat((logvar_dec, logvar_rec_temp.unsqueeze(0)), dim=0)
+      z_enc = torch.cat((z_enc, z_temp.unsqueeze(0)), dim=0)
+      # logvar_enc = torch.cat((logvar_enc, logvar_temp.unsqueeze(0)), dim=0)
+
+    # join repetition and Channels and get the mean
+    x_rec, mu_dec, logvar_dec = (t.view(-1, x_len) for t in [x_rec, mu_dec, logvar_dec])
+    z_enc = z_enc.view(-1, latent_dims, x_len)
+    x_rec_mean, z_enc_mean, mu_dec_mean, logvar_dec_mean = (torch.mean(t, dim=0, keepdim=True) for t
+                                                                              in
+                                                                              [x_rec, z_enc, mu_dec,
+                                                                               logvar_dec])
+    x_rec_mean = x_rec.mean(0)
+    avg_latents = torch.mean(z_enc_mean, dim=2)
+
+    # Redray the plots
+    self.plot_reconstruction(self.ax_plot, self.x, x_rec, x_rec_mean)
+    self.plot_canvas.draw()
+    self.plot_heatmap(self.ax_heatmap, avg_latents)
+    self.heatmap_canvas.draw()
+    print("replotted")
+
+    # return x, x_rec, x_rec_mean, mu_dec_mean, logvar_dec_mean
 
 
   @torch.no_grad()
@@ -725,6 +801,6 @@ if __name__ == "__main__":
                          shuffle=False
                          )
 
-  app = VQ_gui(v, train_data, params, repetition=3)
+  app = VQ_gui(v, train_data, params, repetition=3, VQ=False)
 
   app.mainloop()
