@@ -12,6 +12,9 @@ from matplotlib.gridspec import GridSpec
 # from ipywidgets import interact
 # from IPython.display import display, clear_output
 import matplotlib.gridspec as gridspec
+from dataGen import Gen
+from train import slidingWindow, train, criterion
+from torch.utils.data import Dataset, DataLoader
 
 
 
@@ -711,3 +714,186 @@ def new_experiment_VQ(data, model):
 
     widgets.VBox([widgets.HBox([grid_box]), out])
 
+def set_effect(effect):
+    if effect == "no_effect":
+        effects = {
+            "Pulse": {
+                "occurances": 0,
+                "max_amplitude": 1.5,
+                "interval": 40
+            },
+            "Trend": {
+                "occurances": 0,
+                "max_slope": 0.005,
+                "type": "linear"
+            },
+            "Seasonality": {
+                "occurances": 0,
+                "frequency_per_week": (7, 14),  # min and max occurances per week
+                "amplitude_range": (5, 20),
+            },
+            "std_variation": {
+                "occurances": 0,
+                "max_value": 10,
+                "interval": 1000,
+            },
+            "channels_coupling": {
+                "occurances": 0,
+                "coupling_strengh": 20
+            },
+            "Noise": {
+                "occurances": 0,
+                "max_slope": 0.005,
+                "type": "linear"
+            }
+        }
+    elif effect == "trend":
+        effects = {
+            "Pulse": {
+                "occurances": 0,
+                "max_amplitude": 1.5,
+                "interval": 40
+            },
+            "Trend": {
+                "occurances": 1,
+                "max_slope": 0.005,
+                "type": "linear"
+            },
+            "Seasonality": {
+                "occurances": 0,
+                "frequency_per_week": (7, 14),  # min and max occurances per week
+                "amplitude_range": (5, 20),
+            },
+            "std_variation": {
+                "occurances": 0,
+                "max_value": 10,
+                "interval": 1000,
+            },
+            "channels_coupling": {
+                "occurances": 0,
+                "coupling_strengh": 20
+            },
+            "Noise": {
+                "occurances": 0,
+                "max_slope": 0.005,
+                "type": "linear"
+            }
+        }
+    elif effect == "seasonality":
+        effects = {
+            "Pulse": {
+                "occurances": 0,
+                "max_amplitude": 1.5,
+                "interval": 40
+            },
+            "Trend": {
+                "occurances": 0,
+                "max_slope": 0.005,
+                "type": "linear"
+            },
+            "Seasonality": {
+                "occurances": 1,
+                "frequency_per_week": (7, 14),  # min and max occurances per week
+                "amplitude_range": (5, 20),
+            },
+            "std_variation": {
+                "occurances": 0,
+                "max_value": 10,
+                "interval": 1000,
+            },
+            "channels_coupling": {
+                "occurances": 0,
+                "coupling_strengh": 20
+            },
+            "Noise": {
+                "occurances": 0,
+                "max_slope": 0.005,
+                "type": "linear"
+            }
+        }
+
+    return effects
+def generate_data(n_channels, effect, L, periode=15, step=5, val=500 ):
+    effects = set_effect(effect)
+    X = Gen(periode, step, val, n_channels, effects)
+    x, params, e_params = X.parameters()
+    # pprint.pprint(params)
+    # pprint.pprint(e_params)
+    # X.show()
+    x = torch.FloatTensor(x)
+
+    # x = F.normalize(x, p=2, dim=1)
+    n = x.shape[1]
+    # L = 30
+
+    train_ = x[:, :int(0.8*n)]
+    val_   = x[:, int(0.8*n):int(0.9*n)]
+    test_  = x[:, int(0.9*n):]
+
+    train_data = DataLoader(slidingWindow(train_, L),
+                            batch_size= 22,# 59, # 22
+                            shuffle = False
+                            )
+    val_data = DataLoader(slidingWindow(val_, L),
+                            batch_size=22,
+                            shuffle = False
+                            )
+    test_data = DataLoader(slidingWindow(test_, L),
+                            batch_size=22,
+                            shuffle = False
+                            )
+    return X, train_data, test_data
+
+
+def train_on_effect(model, opt, device, n_channels=1, effect='no_effect', n_samples=10, epochs_per_sample=50):
+    L = model._L
+    latent_dims = model._latent_dims
+    for i in range(n_samples):
+        X, train_data, test_data = generate_data(n_channels, effect, L)
+        x, params, e_params = X.parameters()
+
+        for epoch in range(1, epochs_per_sample):
+            train(model, train_data, criterion, opt, device, epoch, VQ=True)
+        save(x, "data", effect, n_channels, latent_dims, L, i)
+        save(params, "params", effect, n_channels, latent_dims, L, i)
+        save(e_params, "e_params", effect, n_channels, latent_dims, L, i)
+        save(model, "model", effect, n_channels, latent_dims, L, i)
+    return model, X, train_data
+
+def save(obj, name, effect, n_channels, latent_dims, L, i):
+    torch.save(obj, r'modules\vq_vae_{}_{}_{}channels_{}latent_{}window_{}.pt'.format(name, effect, n_channels, latent_dims, L, i))
+
+
+def get_average_norm_scale(train_data, model):
+    n_channels = model._n_channels
+    norm = torch.empty(n_channels, 0)
+
+    for i, (data, norm_scale) in enumerate(train_data):
+        reshaped_norm = norm_scale.permute(1, 0, 2).flatten(1)
+        norm = torch.cat((norm, reshaped_norm), 1)
+
+    avg_norm = torch.mean(norm, dim=1)
+    return avg_norm
+
+
+def get_latent_variables(train_data, model):
+    model.eval()
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    n_channels = model._n_channels
+    latent_dims = model._latent_dims
+
+    latents = torch.empty(n_channels, latent_dims, 0, device=device)
+
+    for i, (data, norm_scale) in enumerate(train_data):
+        data = data.to(device)
+
+        mu, logvar = model.encoder(data)
+        z = model.reparametrization_trick(mu, logvar)
+
+        reshaped_mu, reshaped_logvar, reshaped_z = (t.permute(1, 2, 0) for t in [mu, logvar, z])
+
+        latents = torch.cat((latents, reshaped_z), 2)
+
+    avg_latents = torch.mean(latents, dim=2)
+    return latents, avg_latents

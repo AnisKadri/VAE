@@ -9,7 +9,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
-from VQ_EMA_fn import *
+from Encoders import LongShort_TCVAE_Encoder#, RnnEncoder, MST_VAE_Encoder, MST_VAE_Encoder_dist
+from Decoders import LongShort_TCVAE_Decoder#, RnnDecoder, MST_VAE_Decoder, MST_VAE_Decoder_dist
+from vae import  Variational_Autoencoder, VQ_MST_VAE, VQ_Quantizer
+from utils import train_on_effect
+from train import slidingWindow, stridedWindow, train, criterion
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.widgets import Cursor
 from copy import deepcopy
@@ -46,7 +50,7 @@ class VQ_gui(tk.Tk):
     self.cov = params["cov"].squeeze()[:self.T]
 
     # Sample x, x_rec and the latent space
-    self.x, self.x_rec, self.x_rec_mean, self.mu, self.logvar, mu_dec_mean, logvar_dec_mean = self.sample_vae()
+    self.x, self.x_rec, self.x_rec_mean, self.mu, self.logvar, self.mu_dec_mean, self.logvar_dec_mean, self.norm_vec = self.sample_vae()
 
     # self.x, self.mu, self.logvar, self.z, self.embed, self.x_rec, self.x_rec_mean, self.norm_vec = self.sample_from_data_VQ(model, data, repetition)
     # print("embed shape", self.embed.shape)
@@ -54,11 +58,11 @@ class VQ_gui(tk.Tk):
     # self.MI_scores = self.calculate_MI_score(self.mean)
 
     # create a DataLoader from mu and logvar for later generation
-    self.mu_loader = DataLoader(slidingWindow(self.mu, self.L), #self.mu, #slidingWindow(self.mu, self.L),
+    self.mu_loader = DataLoader(stridedWindow(self.mu, self.L, stride=0), #self.mu, #slidingWindow(self.mu, self.L),
                            batch_size=self.batch_size,
                            shuffle=False
                            )
-    self.logvar_loader = DataLoader(slidingWindow(self.logvar, self.L), #self.logvar, #slidingWindow(self.logvar, self.L),
+    self.logvar_loader = DataLoader(stridedWindow(self.logvar, self.L, stride=0), #self.logvar, #slidingWindow(self.logvar, self.L),
                                batch_size=self.batch_size,
                                shuffle=False
                                )
@@ -121,13 +125,13 @@ class VQ_gui(tk.Tk):
 
 
   def create_heatmap(self, heatmap_frame):
-    fig = Figure(figsize=(8, 6), dpi=100)
-    ax_heatmap = fig.add_subplot(111)
+    self.heatmap_fig = Figure(figsize=(8, 6), dpi=100)
+    ax_heatmap = self.heatmap_fig.add_subplot(111)
     heatmap = self.plot_heatmap(ax_heatmap, self.avg_latents * self.avg_norm)
-    heatmap_canvas = FigureCanvasTkAgg(fig, master=heatmap_frame)
+    heatmap_canvas = FigureCanvasTkAgg(self.heatmap_fig, master=heatmap_frame)
     heatmap_canvas.draw()
     heatmap_canvas.get_tk_widget().pack(fill="both", expand=True)
-    cbar = fig.colorbar(heatmap)
+    self.cbar = self.heatmap_fig.colorbar(heatmap)
     ax_heatmap.set_xlabel('Num of Embeddings')
     ax_heatmap.set_ylabel('Latent Dimensions')
 
@@ -255,7 +259,7 @@ class VQ_gui(tk.Tk):
       for row in range(self.num_embed):
         self.double_var = tk.DoubleVar()
         # create the Spinbox and link it to the DoubleVar
-        self.spinbox = Spinbox(grid_frame, from_=-500.0, to=500, increment=0.2, textvariable=self.double_var,
+        self.spinbox = Spinbox(grid_frame, from_=-500.0, to=500, increment=5, textvariable=self.double_var,
                                command=lambda idx=row, idy=col:  self.sample_from_codebook(idx, idy) if self.VQ else self.sample_vae_latent(idx, idy))
         # self.spinbox.bind('<Return>', self.set_spinbox_value(row, col))
         self.spinbox.grid(row=row, column=col, sticky="NSEW")
@@ -349,10 +353,12 @@ class VQ_gui(tk.Tk):
 
   def plot_reconstruction(self, ax_plot, x, x_rec, x_rec_mean):
     ax_plot.clear()
-    ax_plot.plot(x.T, "b", alpha=0.2)
+    print(x.shape)
+    print(x_rec.shape)
+    ax_plot.plot(x, "b", alpha=0.2)
 
-    rec_lines = ax_plot.plot(x_rec.T, "orange", alpha=0.2)
-    rec_lines_mean = ax_plot.plot(x_rec_mean, "r")
+    ax_plot.plot(x_rec, "orange", alpha=0.2)
+    ax_plot.plot(x_rec_mean.T, "r")
     # Create custom legend handles and labels
     blue_handle = plt.Line2D([], [], color='b', label='Original Data')
     red_handle = plt.Line2D([], [], color='r', label='Reconstructions mean')
@@ -459,9 +465,14 @@ class VQ_gui(tk.Tk):
   @torch.no_grad()
   def sample_from_codebook(self, row, col):
     # Get the current codebook
-    code = self.model.quantizer._embedding.weight.detach().numpy()
+    # code = self.model.quantizer._embedding.weight.detach().numpy()
     # add the new value to the codebook
-    new_code_book = self.set_new_val(code)
+    # new_code_book = self.set_new_val(code)
+    new_val_idx = row * self.num_embed + col
+    new_val = torch.tensor(float(self.spinboxs[new_val_idx].get()))
+    # new_code_book = code[row, col]
+    self.model.quantizer._embedding.weight[row, col] = new_val
+    new_code_book = self.model.quantizer._embedding.weight.detach().numpy()
     # init the batch index in the main reconstruction (idx += batchsize in each loop)
     idx = 0
 
@@ -469,16 +480,16 @@ class VQ_gui(tk.Tk):
     x_rec = torch.empty(self.repetition, self.L, self.n_channels)
 
     # Loop through data n times
-    for i, (_mu, _logvar) in enumerate(zip(self.mu_loader, self.logvar_loader)):
+    for i, ((_mu, mu_norm), (_logvar, logvar_norm)) in enumerate(zip(self.mu_loader, self.logvar_loader)):
       # get batch size (last batch may have a different size)
       bs = _mu.shape[0]
       bs = self.L
       print(bs)
       for j in range(self.repetition):
         # generate the batch reconstruction
-        _z = self.model.reparametrization_trick(_mu, _logvar)
+        _z = self.model.reparametrization_trick(_mu[..., 0], _logvar[..., 0])
         _embed, _ = self.model.quantizer(_z)
-        rec = self.model.decoder(_embed)
+        rec, mu_dec, logvar_dec = self.model.decoder(_embed)
 
 
         # add the batch reconstruction to the main rec
@@ -525,12 +536,12 @@ class VQ_gui(tk.Tk):
   def sample_vae(self):
     x_len = len(self.data.dataset)
 
-    x_rec, mu_dec, logvar_dec = (torch.empty(0, self.n_channels, x_len, device=self.device) for _ in range(3))
+    x_rec, mu_dec, logvar_dec, norm_vec = (torch.empty(0, self.n_channels, x_len, device=self.device) for _ in range(4))
     mu_enc, logvar_enc = (torch.empty(0, self.n_channels, self.latent_dims, x_len, device=self.device) for _ in range(2))
 
     for j in range(self.repetition):
       # create temp tensors to store data in each repetition
-      x, x_rec_temp, mu_rec_temp, logvar_rec_temp = (torch.empty(self.n_channels, 0, device=self.device) for _ in range(4))
+      x, x_rec_temp, mu_rec_temp, logvar_rec_temp, norm_scale_temp = (torch.empty(self.n_channels, 0, device=self.device) for _ in range(5))
       mu_temp, logvar_temp = (torch.empty(self.n_channels, self.latent_dims, 0, device=self.device) for _ in range(2))
 
       for i, (batch, norm_scale) in enumerate(self.data):
@@ -549,33 +560,41 @@ class VQ_gui(tk.Tk):
         mu_rec_temp = torch.cat((mu_rec_temp, mu_rec * norm_scale), dim=1)
         logvar_rec_temp = torch.cat((logvar_rec_temp, logvar_rec * norm_scale), dim=1)
         x_rec_temp = torch.cat((x_rec_temp, rec * norm_scale), dim=1)
+        norm_scale_temp = torch.cat((norm_scale_temp,  norm_scale), dim=1)
         x = torch.cat((x, batch*norm_scale), dim=1)
 
       # Store data after each reconstruction
       x_rec = torch.cat((x_rec, x_rec_temp.unsqueeze(0)), dim=0)
       mu_dec = torch.cat((mu_dec, mu_rec_temp.unsqueeze(0)), dim=0)
       logvar_dec = torch.cat((logvar_dec, logvar_rec_temp.unsqueeze(0)), dim=0)
+      norm_vec = torch.cat((norm_vec, norm_scale_temp.unsqueeze(0)), dim=0)
       mu_enc = torch.cat((mu_enc, mu_temp.unsqueeze(0)), dim=0)
       logvar_enc = torch.cat((logvar_enc, logvar_temp.unsqueeze(0)), dim=0)
 
     # join repetition and Channels and get the mean
-    x_rec, mu_dec, logvar_dec = (t.view(-1, x_len) for t in [x_rec, mu_dec, logvar_dec])
+    x_rec, mu_dec, logvar_dec, norm_vec = (t.view(-1, x_len) for t in [x_rec, mu_dec, logvar_dec, norm_vec])
     mu_enc, logvar_enc =(t.view(-1, latent_dims, x_len) for t in [mu_enc, logvar_enc])
-    x_rec_mean, mu_enc_mean, logvar_enc_mean, mu_dec_mean, logvar_dec_mean = (torch.mean(t, dim=0, keepdim=True) for t in
+    x_rec_mean, mu_enc_mean, logvar_enc_mean, mu_dec_mean, logvar_dec_mean, norm_vec = (torch.mean(t, dim=0, keepdim=True) for t in
                                                                               [x_rec, mu_enc, logvar_enc, mu_dec,
-                                                                               logvar_dec])
+                                                                               logvar_dec, norm_vec])
     x_rec_mean = x_rec.mean(0)
 
-    return x, x_rec, x_rec_mean, mu_enc_mean, logvar_enc_mean, mu_dec_mean, logvar_dec_mean
+    return x, x_rec, x_rec_mean, mu_enc_mean, logvar_enc_mean, mu_dec_mean, logvar_dec_mean, norm_vec
 
   @torch.no_grad()
   def sample_vae_latent(self, row, col):
     print(self.mu.shape, self.logvar.shape)
     print(torch.ones_like(self.mu[row, col, :]).shape)
     x_len = len(self.data.dataset)
-    self.mu[row, col, :] += torch.ones_like(self.mu[row, col, :])
+    new_val_idx = row * self.num_embed + col
+    new_val = torch.tensor(float(self.spinboxs[new_val_idx].get()))
+    print(new_val)
+    increment = new_val - torch.mean(self.mu[row, col, :])
+    print(increment)
+    self.mu[row, col, :] += torch.ones_like(self.mu[row, col, :]) * increment
     self.mu = torch.FloatTensor(self.mu)
-    print(self.mu.shape)
+
+    print(self.mu[row, col, :])
 
     x_rec, mu_dec, logvar_dec = (torch.empty(0, self.n_channels, x_len, device=self.device) for _ in range(3))
 
@@ -595,27 +614,73 @@ class VQ_gui(tk.Tk):
       x_rec_temp, mu_rec_temp, logvar_rec_temp = (torch.empty(self.n_channels, 0, device=self.device) for _ in
                                                      range(3))
       z_temp = torch.empty(self.n_channels, self.latent_dims, 0, device=self.device)
+      idx = 0
 
-      for i, (_mu, _logvar) in enumerate(zip(mu_loader, logvar_loader)):
+      for i, ((_mu,norm_mu), (_logvar, norm_logvar)) in enumerate(zip(mu_loader, logvar_loader)):
+        bs = _mu.shape[0]
+        # print(_mu.shape)
+        # print(_logvar.shape)
+        # norm_mu = norm_mu.squeeze(-1)
+        # norm_logvar = norm_logvar.squeeze(-1)
         _mu = _mu.to(self.device)
         _logvar = _logvar.to(self.device)
-        z = self.model.reparametrization_trick(_mu, _logvar)
+        # print("mu", _mu[0, row, col, :])
+        z = self.model.reparametrization_trick(_mu * norm_mu, _logvar * norm_logvar)
+        # print("z", z[0, row, col, :])
         # sample from model
-        rec, mu_rec, logvar_rec = self.model.decoder(z)
+        rec, mu_rec, logvar_rec = self.model.decoder(z[..., 0])
         # rec, loss, _mu, _logvar, mu_rec, logvar_rec = self.model(batch)
 
         # reshape data -> (Channel, latent_dims, BS) or (Channel, BS)
-        z = z.permute(1, 2, 0)
-        rec, norm_scale, mu_rec, logvar_rec = (t.permute(1, 0, 2)[:, :, 0] for t in
-                                                      [rec, norm_scale, mu_rec, logvar_rec])
+        if _mu.shape[0] != self.batch_size:
+          rec_last, mu_rec_last, logvar_rec_last = (t.permute(1, 0, 2)[:,-1, :] for t in
+                                                           [rec, mu_rec, logvar_rec])
+          norm_last = self.norm_vec[:, idx+bs:]
+          z_last = z.permute(1, 2, 0, 3)[:, :, -1, :]
+
+          # print("############################Last############################")
+          # print("norm, idx", norm_last.shape, idx)
+          # print("z after permute", z.shape)
+          # print("rec ", rec_last.shape)
+          # print("mu_rec ", mu_rec_last.shape)
+          # print("logvar_rec ", logvar_rec_last.shape)
+
+        # print("z before permute", z.shape)
+        z = z.permute(1, 2, 0, 3)[..., 0]
+        # print("############################Before############################")
+        # print("norm", self.norm_vec.shape)
+        #
+        # print("z after permute", z.shape)
+        # print("rec ", rec.shape)
+        # print("mu_rec ", mu_rec.shape)
+        # print("logvar_rec ", logvar_rec.shape)
+
+        rec,  mu_rec, logvar_rec = (t.permute(1, 0, 2)[:, :, 0] for t in
+                                                    [rec, mu_rec, logvar_rec])
+        norm = self.norm_vec[:, idx]
+
+
+        # print("############################After############################")
+        # print("norm, idx", norm.shape, idx)
+        # print("z after permute", z.shape)
+        # print("rec ", rec.shape)
+        # print("mu_rec ", mu_rec.shape)
+        # print("logvar_rec ", logvar_rec.shape)
 
         # Temp store data
         z_temp = torch.cat((z_temp, z), dim=2)
-        # logvar_temp = torch.cat((logvar_temp, _logvar), dim=2)
-        mu_rec_temp = torch.cat((mu_rec_temp, mu_rec * norm_scale), dim=1)
-        logvar_rec_temp = torch.cat((logvar_rec_temp, logvar_rec * norm_scale), dim=1)
-        x_rec_temp = torch.cat((x_rec_temp, rec * norm_scale), dim=1)
-        # x = torch.cat((x, batch * norm_scale), dim=1)
+        mu_rec_temp = torch.cat((mu_rec_temp, mu_rec * norm), dim=1)
+        logvar_rec_temp = torch.cat((logvar_rec_temp, logvar_rec * norm), dim=1)
+        x_rec_temp = torch.cat((x_rec_temp, rec * norm), dim=1)
+
+        if _mu.shape[0] != self.batch_size:
+          z_temp = torch.cat((z_temp, z_last), dim=2)
+          mu_rec_temp = torch.cat((mu_rec_temp, mu_rec_last * norm_last), dim=1)
+          logvar_rec_temp = torch.cat((logvar_rec_temp, logvar_rec_last * norm_last), dim=1)
+          x_rec_temp = torch.cat((x_rec_temp, rec_last * norm_last), dim=1)
+
+        idx += bs
+
 
       # Store data after each reconstruction
       x_rec = torch.cat((x_rec, x_rec_temp.unsqueeze(0)), dim=0)
@@ -633,13 +698,18 @@ class VQ_gui(tk.Tk):
                                                                                logvar_dec])
     x_rec_mean = x_rec.mean(0)
     avg_latents = torch.mean(z_enc_mean, dim=2)
+    print(avg_latents)
 
     # Redray the plots
+    print(type(self.ax_plot))
+    self.ax_plot.clear()
     self.plot_reconstruction(self.ax_plot, self.x, x_rec, x_rec_mean)
     self.plot_canvas.draw()
-    self.plot_heatmap(self.ax_heatmap, avg_latents)
+    heatmap = self.plot_heatmap(self.ax_heatmap, avg_latents)
+    self.cbar.update_normal(heatmap)
     self.heatmap_canvas.draw()
     print("replotted")
+    print(x_rec_mean)
 
     # return x, x_rec, x_rec_mean, mu_dec_mean, logvar_dec_mean
 
@@ -761,18 +831,18 @@ class VQ_gui(tk.Tk):
 if __name__ == "__main__":
   n_channels = 1
   latent_dims = 7
-  L = 60
-  i = 0
-  effect = "no_effect" # trend, seasonality, std_variation, trend_seasonality, no_effect
+  L = 4032
+  i = 2
+  effect = "seasonality" # trend, seasonality, std_variation, trend_seasonality, no_effect
 
 
   # x = torch.load(r'modules\data_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
   # params = torch.load(r'modules\params_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
   # v = torch.load(r'modules\vq_ema_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
 
-  x = torch.load(r'modules\data_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
-  params = torch.load(r'modules\params_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
-  v = torch.load(r'modules\model_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
+  x = torch.load(r'modules\vq_vae_strided_data_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
+  params = torch.load(r'modules\vq_vae_strided_params_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
+  v = torch.load(r'modules\vq_vae_strided_model_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
 
 
   print(x)
@@ -788,19 +858,19 @@ if __name__ == "__main__":
   train_ = x[:, :int(0.8 * n)]
   val_ = x[:, int(0.8 * n):int(0.9 * n)]
   test_ = x[:, int(0.9 * n):]
-  train_data = DataLoader(slidingWindow(train_, L),
+  train_data = DataLoader(stridedWindow(train_, L, stride=0),
                           batch_size=batch_size,
                           shuffle=False
                           )
-  val_data = DataLoader(slidingWindow(val_, L),
+  val_data = DataLoader(stridedWindow(val_, L, stride=0),
                         batch_size=batch_size,
                         shuffle=False
                         )
-  test_data = DataLoader(slidingWindow(test_, L),
+  test_data = DataLoader(stridedWindow(test_, L, stride=0),
                          batch_size=batch_size,
                          shuffle=False
                          )
 
-  app = VQ_gui(v, train_data, params, repetition=3, VQ=False)
+  app = VQ_gui(v, train_data, params, repetition=3, VQ=True)
 
   app.mainloop()

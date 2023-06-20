@@ -418,25 +418,25 @@ class VQ_MST_VAE(nn.Module):
         # print("Is encoder output larger than the set of vectors?", is_larger)
         e, loss_quantize = self.quantizer(z)
 
-        # print("----------------Encoder Output-------------")
-        # print("mu and logvar", mu.shape, logvar.shape)
-        # print("----------------Reparametrization-------------")
-        # print("Z", z.shape)
-        # print("----------------Quantizer-------------")
-        # print("quantized shape", e.shape)
-        # print("loss shape", loss_quantize)
+#         print("----------------Encoder Output-------------")
+#         print("mu and logvar", mu.shape, logvar.shape)
+#         print("----------------Reparametrization-------------")
+#         print("Z", z.shape)
+#         print("----------------Quantizer-------------")
+#         print("quantized shape", e.shape)
+#         print("loss shape", loss_quantize)
 
         #         mu_dec, logvar_dec = self.decoder(e)
         #         x_rec = self.reparametrization_trick(mu_dec, mu_dec)
-        x_rec = self.decoder(e)
+        x_rec, mu_rec, logvar_rec = self.decoder(e)
         loss_rec = F.mse_loss(x_rec, x, reduction='sum')
         loss = loss_rec + loss_quantize
 
-        # print("----------------Decoding-------------")
-        # print("----------------Decoder Output-------------")
-        # # print("mu and logvar Decoder", mu_dec.shape, logvar_dec.shape)
-        # print("rec shape", x_rec.shape)
-        return x_rec, loss, mu, logvar
+#         print("----------------Decoding-------------")
+#         print("----------------Decoder Output-------------")
+#         # print("mu and logvar Decoder", mu_dec.shape, logvar_dec.shape)
+#         print("rec shape", x_rec.shape)
+        return x_rec, loss, mu, logvar, mu_rec, logvar_rec
 
     # In[12]:
 
@@ -636,17 +636,18 @@ class slidingWindow(Dataset):
         self.L = L
 
     def __getitem__(self, index):
-        if self.data.shape[1] - index >= self.L:
-            x = self.data[:, index:index + self.L]
-            v = torch.sum(x / self.L, axis=1).unsqueeze(1)
+        if self.data.shape[-1] - index >= self.L:
+            x = self.data[..., index:index + self.L]
+            v = torch.sum(x / self.L, axis=(self.data.dim() - 1), keepdim=True)
             x = x / v
             return (x, v)
 
     def __len__(self):
-        if self.data.dim() == 2:
-            return self.data.shape[1] - self.L
-        else:
-            return self.data.shape[0] - self.L
+        return self.data.shape[-1] - self.L
+        # if self.data.dim() == 2:
+        #     return self.data.shape[1] - self.L
+        # else:
+        #     return self.data.shape[0] - self.L
 
 
 ### Cost function
@@ -810,13 +811,13 @@ class Variational_Autoencoder(nn.Module):
         # print("Is encoder output larger than the set of vectors?", is_larger)
         #         e, loss_quantize = self.quantizer(z)
 
-        #         print("----------------Encoder Output-------------")
-        #         print("mu and logvar", mu.shape, logvar.shape)
-        #         print("----------------Reparametrization-------------")
-        #         print("Z", z.shape)
-        #         print("----------------Quantizer-------------")
-        #         print("quantized shape", e.shape)
-        #         print("loss shape", loss_quantize)
+        # print("----------------Encoder Output-------------")
+        # print("mu and logvar", mu.shape, logvar.shape)
+        # print("----------------Reparametrization-------------")
+        # print("Z", z.shape)
+        # print("----------------Quantizer-------------")
+        # print("quantized shape", e.shape)
+        # print("loss shape", loss_quantize)
 
         #         mu_dec, logvar_dec = self.decoder(e)
         #         x_rec = self.reparametrization_trick(mu_dec, mu_dec)
@@ -825,10 +826,10 @@ class Variational_Autoencoder(nn.Module):
         loss_rec = F.mse_loss(x_rec, x, reduction='sum')
         loss = loss_rec + self._ß * loss_kld
 
-        #         print("----------------Decoding-------------")
-        #         print("----------------Decoder Output-------------")
-        #         # print("mu and logvar Decoder", mu_dec.shape, logvar_dec.shape)
-        #         print("rec shape", x_rec.shape)
+        # print("----------------Decoding-------------")
+        # print("----------------Decoder Output-------------")
+        # # print("mu and logvar Decoder", mu_dec.shape, logvar_dec.shape)
+        # print("rec shape", x_rec.shape)
         return x_rec, loss, mu, logvar, mu_rec, logvar_rec
 
 
@@ -979,7 +980,7 @@ def train_on_effect(model, opt, device, n_channels=1, effect='no_effect', n_samp
     return model, X, train_data
 
 def save(obj, name, effect, n_channels, latent_dims, L, i):
-    torch.save(obj, r'modules\{}_{}_{}channels_{}latent_{}window_{}.pt'.format(name, effect, n_channels, latent_dims, L, i))
+    torch.save(obj, r'modules\vq_vae_{}_{}_{}channels_{}latent_{}window_{}.pt'.format(name, effect, n_channels, latent_dims, L, i))
 
 
 def get_average_norm_scale(train_data, model):

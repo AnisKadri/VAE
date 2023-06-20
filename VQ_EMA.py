@@ -6,7 +6,16 @@ import os
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 import torch; torch.manual_seed(955)
 import torch.optim as optim
-from VQ_EMA_fn import *
+# from VQ_EMA_fn import *
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+
+from Encoders import LongShort_TCVAE_Encoder#, RnnEncoder, MST_VAE_Encoder, MST_VAE_Encoder_dist
+from Decoders import LongShort_TCVAE_Decoder#, RnnDecoder, MST_VAE_Decoder, MST_VAE_Decoder_dist
+from vae import  Variational_Autoencoder, VQ_MST_VAE, VQ_Quantizer
+from utils import train_on_effect
 
 # import optuna
 # from optuna.samplers import TPESampler
@@ -20,37 +29,37 @@ L= 60# 39 #32
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-v = Variational_Autoencoder(n_channels = n_channels,
-                            num_layers =  3,#4, #3
-                            latent_dims= latent_dims,
-                            v_encoder = LongShort_TCVAE_Encoder, #MST_VAE_Encoder,
-                            v_decoder = LongShort_TCVAE_Decoder, #MST_VAE_Decoder,
-                            L=L,
-                            slope = 0,
-                            first_kernel = 15, #11, #20
-                            ß = 1.5,
-                            modified=False,
-                            reduction = True)
-# v = VQ_MST_VAE(n_channels = n_channels,
-#                             num_layers =  2,#4, #3
+# v = Variational_Autoencoder(n_channels = n_channels,
+#                             num_layers =  3,#4, #3
 #                             latent_dims= latent_dims,
 #                             v_encoder = LongShort_TCVAE_Encoder, #MST_VAE_Encoder,
 #                             v_decoder = LongShort_TCVAE_Decoder, #MST_VAE_Decoder,
-#                             v_quantizer = VQ_Quantizer,
 #                             L=L,
 #                             slope = 0,
-#                             first_kernel = 20, #11, #20
-#                             commit_loss = 0.25,
-#                             modified= False,
-#                             reduction=True
-#                ) #10 5
+#                             first_kernel = 15, #11, #20
+#                             ß = 1.5,
+#                             modified=False,
+#                             reduction = True)
+v = VQ_MST_VAE(n_channels = n_channels,
+                            num_layers =  2,#4, #3
+                            latent_dims= latent_dims,
+                            v_encoder = LongShort_TCVAE_Encoder, #MST_VAE_Encoder,
+                            v_decoder = LongShort_TCVAE_Decoder, #MST_VAE_Decoder,
+                            v_quantizer = VQ_Quantizer,
+                            L=L,
+                            slope = 0,
+                            first_kernel = 20, #11, #20
+                            commit_loss = 0.25,
+                            modified= False,
+                            reduction=True
+               ) #10 5
 
 v = v.to(device)
 opt = optim.Adam(v.parameters(), lr = 0.005043529186448577) # 0.005043529186448577 0.006819850049647945
 
-v, X, train_data = train_on_effect(v, opt, device, effect='no_effect', n_samples=10)
-v, X, train_data = train_on_effect(v, opt, device, effect='trend', n_samples=10)
-v, X, train_data = train_on_effect(v, opt, device, effect='seasonality', n_samples=10)
+v, X, train_data = train_on_effect(v, opt, device, effect='no_effect', n_samples=3, epochs_per_sample=20)
+v, X, train_data = train_on_effect(v, opt, device, effect='trend', n_samples=3, epochs_per_sample=20)
+v, X, train_data = train_on_effect(v, opt, device, effect='seasonality', n_samples=3, epochs_per_sample=20)
 
 
 def compare(dataset, model, VQ=True):

@@ -24,36 +24,39 @@ class slidingWindow(Dataset):
         self.L = L
 
     def __getitem__(self, index):
-        if self.data.shape[1] - index >= self.L:            
-            x = self.data[:,index:index+self.L]        
-            return x
-        
+        if self.data.shape[-1] - index >= self.L:
+            x = self.data[..., index:index + self.L]
+            v = torch.sum(x / self.L, axis=(self.data.dim() - 1), keepdim=True)
+            x = x / v
+            return (x, v)
+
     def __len__(self):
-        return self.data.shape[1] - self.L
+        return self.data.shape[-1] - self.L
+        # if self.data.dim() == 2:
+        #     return self.data.shape[1] - self.L
+        # else:
+        #     return self.data.shape[0] - self.L
 
 
 # In[3]:
-
-
-### Cost function
 def criterion(recon_x, x, mu, logvar):
     ### reconstruction loss
     recon_loss = F.mse_loss(recon_x, x, reduction='sum')
 
     ### KL divergence loss
     kld_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    
+
     ### total loss
-    loss = recon_loss + 1*kld_loss
+    loss = recon_loss + 1 * kld_loss
     return loss
 
 
 def sample_mean(model, batch, n):
     batch_size = batch.shape[0]
     n_channels = batch.shape[1]
-    latent_dims = model.encoder._latent_dims
+    latent_dims = model.encoder.latent_dims
 
-    mu, logvar = (torch.empty((batch_size, n_channels, latent_dims// n_channels, 0)).to(batch) for _ in range(2))
+    mu, logvar = (torch.empty((batch_size, 2 * n_channels, latent_dims // n_channels, 0)).to(batch) for _ in range(2))
     REC = torch.empty(batch_size, n_channels, 0).to(batch)
     # print(REC.shape)
     # print(mu.shape)
@@ -71,6 +74,45 @@ def sample_mean(model, batch, n):
     #     print("shapes after mean: mu, logvar, REC ", mu.shape, logvar.shape, REC.shape)
 
     return REC, mu, logvar
+
+
+def train(model, train_loader, criterion, optimizer, device, epoch, VQ=True):
+    model.train()
+    train_loss = 0
+
+    for batch_idx, (data, v) in enumerate(train_loader):
+
+        data = data.to(device)
+        v = v.to(device)
+        optimizer.zero_grad()
+
+        if VQ:
+            x_rec, loss, mu, logvar, mu_rec, logvar_rec = model(data)
+        else:
+            #             x_rec, mu, logvar = model(data)
+            x_rec, mu, logvar = sample_mean(model, data, 10)
+            if v.dim() == 1:
+                v = v.unsqueeze(-1)
+                v = v.unsqueeze(-1)
+            # x_rec_window_length = x_rec.shape[2]
+            loss = criterion(x_rec * v, data[:, :, 0], mu, logvar)
+        # print(x_rec.shape)
+        # print(data[:, :, 0].shape)
+        loss.backward()
+
+        optimizer.step()
+        train_loss += loss.item()
+        if batch_idx % 100 == 0:
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                epoch, batch_idx * len(data), len(train_loader.dataset),
+                       100. * batch_idx / len(train_loader), loss.item() / len(data)))
+    print('====> Epoch: {} Average loss: {:.4f}'.format(epoch, train_loss / len(train_loader.dataset)))
+
+    return train_loss / len(train_loader.dataset)
+
+### Cost function
+
+
 def train_sgvb_loss(qnet, pnet, metrics_dict, prefix='pretrain_', name=None):
     with torch.autograd.profiler.record_function(name if name else 'pre_sgvb_loss'):
         logpx_z = pnet['x'].log_prob()
@@ -133,33 +175,6 @@ def train_vae(train_loader, encoder, decoder, optimizer, device, num_epochs):
                       f"KL = {metrics_dict['pretrain_kl']}")
 
 ### Train function
-def train(model, train_loader, criterion, optimizer, device, epoch, VQ = True):
-    model.train()
-    train_loss = 0
-
-    for batch_idx, data in enumerate(train_loader):
-        
-        data = data.to(device)
-        optimizer.zero_grad()        
-
-        if VQ:
-            x_rec, loss, mu, logvar = model(data)
-        else:
-#             x_rec, mu, logvar = model(data)
-            x_rec, mu, logvar = sample_mean(model, data, 10)
-            # x_rec_window_length = x_rec.shape[2]
-            loss = criterion(x_rec, data[:,:,0], mu, logvar)
-        # print(x_rec.shape)
-        # print(data[:, :, 0].shape)
-        loss.backward()
-
-        optimizer.step()
-        train_loss += loss.item()
-        if batch_idx % 100 == 0:
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                epoch, batch_idx * len(data), len(train_loader.dataset),
-                100. * batch_idx / len(train_loader), loss.item() / len(data)))
-    print('====> Epoch: {} Average loss: {:.4f}'.format(epoch, train_loss / len(train_loader.dataset)))
 
 ### Test Function
 def test(model, test_loader, criterion, device):
@@ -210,3 +225,75 @@ def objective(trial, model, train_data, test_data, criterion_fcn, train_fcn, tes
 
     # Return the validation accuracy as the objective value
     return test_loss
+
+
+def train_MCMC(model, train_loader, criterion, optimizer, device, epoch, VQ=True, repetitions=5):
+    model.train()
+    n_channels = model._n_channels
+    x_len = len(train_loader.dataset)
+    bs = train_loader.batch_size
+    label_data = torch.empty(0, n_channels, device=device)
+    train_loss = 0
+    n = 5
+    for i in range(repetitions):
+        train_loss = 0
+        new_x = torch.empty(0, n_channels, device=device)
+
+        #         print("here again")
+        for batch_idx, (data, v) in enumerate(train_loader):
+
+            data = data.to(device)
+            v = v.to(device)
+            optimizer.zero_grad()
+
+            if VQ:
+                x_rec, loss, mu, logvar, mu_rec, logvar_rec = model(data)
+            else:
+                #             x_rec, mu, logvar = model(data)
+                x_rec, mu, logvar = sample_mean(model, data, 10)
+                if v.dim() == 1:
+                    v = v.unsqueeze(-1)
+                    v = v.unsqueeze(-1)
+                # x_rec_window_length = x_rec.shape[2]
+                loss = criterion((x_rec * v)[:, :, 0], data[:, :, 0], mu, logvar)
+            # print(x_rec.shape)
+            # print(data[:, :, 0].shape)
+            #             rec_reshaped = x_rec[:,:,0]
+            #             print("norm shape", v.shape)
+            #             print("new_x shape", new_x.shape)
+            #             print("rec point to add", x_rec[:,:,0].shape)
+            new_x = torch.cat((new_x, (x_rec * v)[:, :, 0]), dim=0)
+            if i == 0:
+                label_data = torch.cat((label_data, (data * v)[:, :, 0]), dim=0)
+            #             print("new x filling", new_x.shape)
+            if data.shape[0] != bs:
+                #                 print("last batch")
+                #                 print("shape to take", (x_rec*v)[-1,:,0:].permute(1,0).shape)
+                new_x = torch.cat((new_x, (x_rec * v)[-1, :, 0:].permute(1, 0)), dim=0).T
+                if i == 0:
+                    label_data = torch.cat((label_data, (data * v)[-1, :, 0:].permute(1, 0)), dim=0).T
+
+            loss.backward()
+
+            optimizer.step()
+            train_loss += loss.item()
+            if batch_idx % 100 == 0:
+                print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                    epoch, batch_idx * len(data), len(train_loader.dataset),
+                           100. * batch_idx / len(train_loader), loss.item() / len(data)))
+        print('====> Epoch: {} Average loss: {:.4f}'.format(epoch, train_loss / len(train_loader.dataset)))
+        #         print("final shape of x:", new_x.shape)
+        x = torch.FloatTensor(new_x.cpu().detach().numpy())
+        new_x, label_data = new_x.cpu(), label_data.cpu()
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.plot(new_x.T.detach().numpy(), "r--")
+        ax.plot(label_data.T.detach().numpy(), "b", alpha=0.2)
+        train_loader = DataLoader(slidingWindow(x, L),
+                                  batch_size=22,  # 59, # 22
+                                  shuffle=False
+                                  )
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(new_x.T.detach().numpy(), "r--")
+    ax.plot(label_data.T.detach().numpy(), "b", alpha=0.2)
+
+    return train_loss / len(train_loader.dataset)
