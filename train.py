@@ -19,9 +19,10 @@ from Decoders import LongShort_TCVAE_Decoder, RnnDecoder
 
 
 class slidingWindow(Dataset):
-    def __init__(self, data, L):
+    def __init__(self, data, L, stride=0):
         self.data = data
         self.L = L
+        self.stride = stride
 
     def __getitem__(self, index):
         if self.data.shape[-1] - index >= self.L:
@@ -32,6 +33,36 @@ class slidingWindow(Dataset):
 
     def __len__(self):
         return self.data.shape[-1] - self.L
+        # if self.data.dim() == 2:
+        #     return self.data.shape[1] - self.L
+        # else:
+        #     return self.data.shape[0] - self.L
+        
+class stridedWindow(Dataset):
+    def __init__(self, data, L, stride=0):
+        self.data = data
+        self.L = L
+        self.stride = stride
+        
+    def __getitem__(self, index):
+        delay = index * self.stride
+        current_window = index * self.L
+#         print("current_window", current_window)
+#         print("delay", delay)
+#         print("length", ((self.data.shape[-1] - self.L) //self.stride) + 1)
+        
+        if self.data.shape[-1] - current_window>= self.L:
+            x = self.data[..., (current_window - delay): ((current_window + self.L) - delay)]
+#         else:
+#             print("here")
+#             x = self.data[..., (current_window - delay):]
+#         print(x.shape)
+            v = torch.sum(x / self.L, axis=(self.data.dim() - 1), keepdim=True)
+            x = x / v
+            return (x, v)
+
+    def __len__(self):
+        return (self.data.shape[-1] // self.L) #((self.data.shape[-1] - self.L) //self.stride) + 1 #(self.data.shape[-1] // self.L) +1
         # if self.data.dim() == 2:
         #     return self.data.shape[1] - self.L
         # else:

@@ -813,7 +813,7 @@ def set_effect(effect):
         }
 
     return effects
-def generate_data(n_channels, effect, L, periode=15, step=5, val=500 ):
+def generate_data(n_channels, effect, L, periode=61, step=5, val=500 ):
     effects = set_effect(effect)
     X = Gen(periode, step, val, n_channels, effects)
     x, params, e_params = X.parameters()
