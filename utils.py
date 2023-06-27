@@ -13,14 +13,30 @@ from matplotlib.gridspec import GridSpec
 # from IPython.display import display, clear_output
 import matplotlib.gridspec as gridspec
 from dataGen import Gen
-from train import slidingWindow, train, criterion
+from train import stridedWindow, slidingWindow, train, criterion
 from torch.utils.data import Dataset, DataLoader
+from datetime import datetime
+import sys
+from functools import wraps
 
 
 
+def suppress_prints(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # Store the original value of sys.stdout
+        original_stdout = sys.stdout
 
-# In[ ]:
+        try:
+            # Replace sys.stdout with a dummy stream that discards output
+            dummy_stream = open("/dev/null", "w")  # Use "nul" on Windows
+            sys.stdout = dummy_stream
+            return func(*args, **kwargs)
+        finally:
+            # Restore the original sys.stdout
+            sys.stdout = original_stdout
 
+    return wrapper
 
 def compare(dataset, model, VQ=True):
     model.eval()
@@ -813,7 +829,7 @@ def set_effect(effect):
         }
 
     return effects
-def generate_data(n_channels, effect, L, periode=61, step=5, val=500 ):
+def generate_data(n_channels, effect, L, periode=365, step=5, val=500 ):
     effects = set_effect(effect)
     X = Gen(periode, step, val, n_channels, effects)
     x, params, e_params = X.parameters()
@@ -830,19 +846,19 @@ def generate_data(n_channels, effect, L, periode=61, step=5, val=500 ):
     val_   = x[:, int(0.8*n):int(0.9*n)]
     test_  = x[:, int(0.9*n):]
 
-    train_data = DataLoader(slidingWindow(train_, L),
+    train_data = DataLoader(stridedWindow(train_, L),
                             batch_size= 22,# 59, # 22
                             shuffle = False
                             )
-    val_data = DataLoader(slidingWindow(val_, L),
+    val_data = DataLoader(stridedWindow(val_, L),
                             batch_size=22,
                             shuffle = False
                             )
-    test_data = DataLoader(slidingWindow(test_, L),
+    test_data = DataLoader(stridedWindow(test_, L),
                             batch_size=22,
                             shuffle = False
                             )
-    return X, train_data, test_data
+    return X, train_data, test_data, effects
 
 
 def train_on_effect(model, opt, device, n_channels=1, effect='no_effect', n_samples=10, epochs_per_sample=50):
@@ -858,6 +874,30 @@ def train_on_effect(model, opt, device, n_channels=1, effect='no_effect', n_samp
         save(params, "params", effect, n_channels, latent_dims, L, i)
         save(e_params, "e_params", effect, n_channels, latent_dims, L, i)
         save(model, "model", effect, n_channels, latent_dims, L, i)
+    return model, X, train_data
+
+def train_on_effect_and_parameters(model, id_model, opt, id_opt, device, n_channels=1, effect='no_effect', n_samples=10, epochs_per_sample=50):
+    L = model._L
+    latent_dims = model._latent_dims
+    for i in range(n_samples):
+        for p in model.parameters():
+            p.requires_grad = True
+        X, train_data, test_data = generate_data(n_channels, effect, L)
+        x, params, e_params = X.parameters()
+        labels = extract_labels(params, e_params)
+
+        for epoch in range(1, epochs_per_sample):
+            train(model, train_data, criterion, opt, device, epoch, VQ=True)            
+            
+        for epoch in range(1, 500):
+            train_identifier(model, id_model, labels, train_data, criterion, id_opt, device, epoch, VQ=True)
+            
+        test_identifier(model, id_model, labels, train_data, criterion, id_opt, device, epoch, VQ=True)
+        print(labels)
+#         save(x, "data", effect, n_channels, latent_dims, L, i)
+#         save(params, "params", effect, n_channels, latent_dims, L, i)
+#         save(e_params, "e_params", effect, n_channels, latent_dims, L, i)
+#         save(model, "model", effect, n_channels, latent_dims, L, i)
     return model, X, train_data
 
 def save(obj, name, effect, n_channels, latent_dims, L, i):
@@ -897,3 +937,98 @@ def get_latent_variables(train_data, model):
 
     avg_latents = torch.mean(latents, dim=2)
     return latents, avg_latents
+
+
+def get_index_from_date(date, ref_time = '2023-03-01T00:00:00', step = 5):  
+    
+    # Convert the Ref time and the given date to a datetime variable
+    reference_time = np.datetime64(ref_time)
+    reference_time = datetime.strptime(reference_time.astype(str), "%Y-%m-%dT%H:%M:%S")
+    date = datetime.strptime(date, "%Y-%m-%dT%H:%M:%S")
+    
+    # Calculate the diff between the input date and the Ref Time, convert to minutes and get the index using the step
+    # step is the number of minutes between each sample
+    index = int((date - reference_time).total_seconds() // (60 * step)) 
+    
+    return index
+
+# look for the index of the first zero element in the given tensor
+def get_next_empty_index(param_tensor):
+    return (param_tensor == 0).nonzero()[0].item()
+
+@suppress_prints
+def extract_param_per_effect(labels, e_params, effect_n, effect):
+    print("###################")
+    print("Effect: ", effect)
+    
+    # for the givven effect, first loop through the channel numbers where this effect occures
+    for (i, channel) in enumerate(e_params[effect]["channel"]):
+        print("//////////////////")
+        print("Channel: ", channel)
+        # for each occurance of this effect loop through all the parameters of this effect 
+        for param_type in e_params[effect]:
+            # skip the channel list
+            if param_type != "channel":
+                print("----------------------")
+                
+                print("Parameter: ", param_type)
+                
+                # look for the next empty slot in the labels tensor
+                next_idx = get_next_empty_index(labels[channel][effect_n])
+                print("Correspending tensor: ", labels[channel][effect_n])
+                print("Next Index: ", next_idx)
+                
+                #get the value of the parameter
+                val = e_params[effect][param_type][i]
+                
+                # if the parameter is the index where it happens (date string) transform it to a an int
+                if param_type == "index": val = get_index_from_date(val)
+                print("Value:", val)
+                
+                #fill the labels tensor
+                labels[channel][effect_n][next_idx] = val
+                
+def get_max_occ(effects):
+    max_occ = 0
+    for effect in effects:
+        if effects[effect]["occurances"] > max_occ:
+            max_occ = effects[effect]["occurances"]
+
+    return max_occ
+
+def squeeze_labels(labels):
+    new_labels = []
+    idxs = labels.nonzero()
+    
+    for index in idxs:
+        ch = index[0]    
+        new_val = [ch, labels[index[0], index[1], index[2]]]
+        new_labels.append(new_val)
+        
+    new_labels = torch.tensor(new_labels)
+    return new_labels
+
+def extract_parameters(n_channels, e_params, effects):
+    # create the labels tensor
+    n_effects = len(effects)
+    max_occ = get_max_occ(effects)
+    labels = torch.zeros((n_channels, n_effects, 4 * max_occ))
+    
+    # loop through the effects and extract their paramaters
+    for (effect_n, effect) in enumerate(e_params):
+        if effect != "Channels_Coupling":
+            extract_param_per_effect(labels, e_params, effect_n, effect)
+    labels = squeeze_labels(labels)    
+        
+    return labels
+
+def add_mu_std(labels, params):
+    mu = torch.FloatTensor(params["mu"]).mean(dim=1)
+    std = torch.diagonal(torch.FloatTensor(params["cov"])).mean(dim=0)
+    mu = torch.stack([torch.arange(len(mu)), mu], dim=1)
+    std = torch.stack([torch.arange(len(std)), std], dim=1)
+    mu_std = torch.cat((mu, std), dim=0).view(-1,2)
+    labels = torch.cat((mu_std, labels), dim=0)
+    labels = labels[labels[:, 0].sort(stable=True)[1]]
+    
+    return labels
