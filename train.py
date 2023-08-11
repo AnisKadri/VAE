@@ -16,8 +16,31 @@ import numpy as np
 import matplotlib.pyplot as plt
 from Encoders import LongShort_TCVAE_Encoder, RnnEncoder
 from Decoders import LongShort_TCVAE_Decoder, RnnDecoder
+from utils import *
+import utils
 
 
+class noWindow(Dataset):
+    def __init__(self, data, labels=None, L=None):
+        self.data = data
+        self.labels = labels
+        self.n = data.shape[-1]
+
+    def __getitem__(self, index):
+        
+        x, label = self.data[index], None         
+        
+        norm = torch.sum(x / self.n, axis=(x.dim()-1), keepdim=True)
+
+        label = self.labels[index]
+        idxs = utils.get_means_indices(label)
+        label[idxs, 1] = label[idxs, 1] / norm
+            
+        x = x / norm
+        return x, label, norm
+    def __len__(self):
+        return self.data.shape[0]
+      
 class slidingWindow(Dataset):
     def __init__(self, data, L, stride=0):
         self.data = data
@@ -27,16 +50,14 @@ class slidingWindow(Dataset):
     def __getitem__(self, index):
         if self.data.shape[-1] - index >= self.L:
             x = self.data[..., index:index + self.L]
-            v = torch.sum(x / self.L, axis=(self.data.dim() - 1), keepdim=True)
-            x = x / v
-            return (x, v)
+            norm = torch.sum(x / self.L, axis=(self.data.dim() - 1), keepdim=True)
+            
+            x = x / norm
+            return x, "", norm
 
     def __len__(self):
         return self.data.shape[-1] - self.L
-        # if self.data.dim() == 2:
-        #     return self.data.shape[1] - self.L
-        # else:
-        #     return self.data.shape[0] - self.L
+
         
 class stridedWindow(Dataset):
     def __init__(self, data, L, stride=0):
@@ -57,9 +78,9 @@ class stridedWindow(Dataset):
 #             print("here")
 #             x = self.data[..., (current_window - delay):]
 #         print(x.shape)
-            v = torch.sum(x / self.L, axis=(self.data.dim() - 1), keepdim=True)
-            x = x / v
-            return (x, v)
+            norm = torch.sum(x / self.L, axis=(self.data.dim() - 1), keepdim=True)
+            x = x / norm
+            return x, "", norm
 
     def __len__(self):
         return (self.data.shape[-1] // self.L) #((self.data.shape[-1] - self.L) //self.stride) + 1 #(self.data.shape[-1] // self.L) +1
@@ -69,6 +90,55 @@ class stridedWindow(Dataset):
         #     return self.data.shape[0] - self.L
 
 
+def create_loader_noWindow(x, labels, L=2016, window=noWindow, batch_size=10, shuffle=True):
+    x = torch.FloatTensor(x)
+    n = x.shape[0]
+
+    train_ , train_labels = x[:int(0.8*n)]           , labels[:int(0.8*n)]
+    val_   , val_labels   = x[int(0.8*n):int(0.9*n)] , labels[int(0.8*n):int(0.9*n)]
+    test_  , test_labels  = x[int(0.9*n):]           , labels[int(0.9*n):]
+
+
+    train_data = DataLoader(window(train_, train_labels), # slidingWindow, stridedWindow
+                            batch_size= batch_size,# 59, # 22
+                            shuffle = shuffle
+                            )
+    val_data = DataLoader(window(val_, val_labels),
+                            batch_size=batch_size,
+                            shuffle = shuffle
+                            )
+    test_data = DataLoader(window(test_, test_labels),
+                            batch_size=batch_size,
+                            shuffle = shuffle
+                            )
+    return train_data, val_data, test_data
+
+def create_loader_Window(x, L=2016, window=slidingWindow, batch_size=10, shuffle=False):
+    # from train import noWindow
+    x = torch.FloatTensor(x)
+    n = x.shape[-1]
+
+    train_ = x[..., :int(0.8*n)]           
+    val_   = x[..., int(0.8*n):int(0.9*n)] 
+    test_  = x[..., int(0.9*n):]           
+
+
+    train_data = DataLoader(window(train_, L=L), # slidingWindow, stridedWindow
+                            batch_size= batch_size,# 59, # 22
+                            shuffle = shuffle,
+                            drop_last=False
+                            )
+    val_data = DataLoader(window(val_, L=L),
+                            batch_size=batch_size,
+                            shuffle = shuffle,
+                            drop_last=False
+                            )
+    test_data = DataLoader(window(test_, L=L),
+                            batch_size=batch_size,
+                            shuffle = shuffle,
+                            drop_last=False
+                            )
+    return train_data, val_data, test_data
 # In[3]:
 def criterion(recon_x, x, mu, logvar):
     ### reconstruction loss
@@ -109,16 +179,18 @@ def sample_mean(model, batch, n):
 
 def train(model, train_loader, criterion, optimizer, device, epoch, VQ=True):
     model.train()
+    for p in model.parameters():
+        p.requires_grad = True
     train_loss = 0
 
-    for batch_idx, (data, v) in enumerate(train_loader):
+    for batch_idx, (data, labels, v) in enumerate(train_loader):
 
         data = data.to(device)
         v = v.to(device)
         optimizer.zero_grad()
 
         if VQ:
-            x_rec, loss, mu, logvar, mu_rec, logvar_rec = model(data)
+            x_rec, loss, mu, logvar, mu_rec, logvar_rec, e = model(data)
         else:
             #             x_rec, mu, logvar = model(data)
             x_rec, mu, logvar = sample_mean(model, data, 10)
@@ -134,12 +206,69 @@ def train(model, train_loader, criterion, optimizer, device, epoch, VQ=True):
         optimizer.step()
         train_loss += loss.item()
         if batch_idx % 100 == 0:
+#             print("True Loss: ", loss.item())
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\t True Loss: {:.6f}'.format(
+                epoch, batch_idx, len(train_loader),
+                       100. * batch_idx / len(train_loader), loss.item() / len(data), loss.item()))
+    print('====> Epoch: {} Average loss: {:.4f}'.format(epoch, train_loss / len(train_loader.dataset)))
+
+    return train_loss / len(train_loader.dataset)
+
+def tune(model, train_loader, criterion, optimizer, device, epoch, VQ=True):
+    model.train()
+    
+    for p in model.parameters():
+        p.requires_grad = True
+    for p in model.quantizer.parameters():
+        p.requires_grad = False
+    for p in model.decoder.parameters():
+        p.requires_grad = True
+    
+    num_embed = model.quantizer._num_embed
+    latent_dims = model._latent_dims
+    n_channels = model._n_channels
+    
+        
+    train_loss = 0
+    rec = torch.empty(n_channels, 0, device=device)
+    x = torch.empty(n_channels, 0, device=device)
+    quantizer_output = torch.empty(0, num_embed, latent_dims, device=device)
+
+    for batch_idx, (data, _, v) in enumerate(train_loader):
+
+        data = data.to(device)
+        v = v.to(device)
+        optimizer.zero_grad()
+
+        if VQ:
+            x_rec, loss, mu, logvar, mu_rec, logvar_rec, e = model(data)
+        else:
+            #             x_rec, mu, logvar = model(data)
+            x_rec, mu, logvar = sample_mean(model, data, 10)
+            if v.dim() == 1:
+                v = v.unsqueeze(-1)
+                v = v.unsqueeze(-1)
+            # x_rec_window_length = x_rec.shape[2]
+            loss = criterion(x_rec * v, data[:, :, 0], mu, logvar)
+        # print(x_rec.shape)
+        # print(data[:, :, 0].shape)
+#         print(e.shape)
+#         print(quantizer_output.shape)
+        rec = torch.cat((rec, (x_rec*v).view(n_channels, -1)), dim=1)
+        x = torch.cat((x, (data*v).view(n_channels, -1)), dim=1)
+        quantizer_output = torch.cat((quantizer_output, e), dim=0)
+#         print(quantizer_output.shape)
+        loss.backward()
+
+        optimizer.step()
+        train_loss += loss.item()
+        if batch_idx % 100 == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
                        100. * batch_idx / len(train_loader), loss.item() / len(data)))
     print('====> Epoch: {} Average loss: {:.4f}'.format(epoch, train_loss / len(train_loader.dataset)))
 
-    return train_loss / len(train_loader.dataset)
+    return x, rec, quantizer_output
 
 ### Cost function
 

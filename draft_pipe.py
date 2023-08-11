@@ -16,17 +16,16 @@ os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 from dataGen import Gen
 from utils import compare, experiment
-from train import slidingWindow, criterion, train, test, objective, train_vae
-from Encoders import LongShort_TCVAE_Encoder, RnnEncoder, MST_VAE_Encoder, MST_VAE_Encoder_Linear, MST_VAE_Encoder_dist
-from Decoders import LongShort_TCVAE_Decoder, RnnDecoder, MST_VAE_Decoder, MST_VAE_Decoder_Linear, MST_VAE_Decoder_dist
-from vae import VariationalAutoencoder, VQ_MST_VAE, VQ_Quantizer
+from train import slidingWindow, criterion, train, test, objective
+from Encoders import LongShort_TCVAE_Encoder, RnnEncoder
+from Decoders import LongShort_TCVAE_Decoder, RnnDecoder
+from vae import VariationalAutoencoder
 
 import torch; torch.manual_seed(955)
 import torch.optim as optim
-import torch.distributions as D
 from torch.utils.data import DataLoader
-# import optuna
-# from optuna.samplers import TPESampler
+import optuna
+from optuna.samplers import TPESampler
 
 
 import numpy as np
@@ -60,10 +59,10 @@ import pprint
 periode = 15 #days
 step = 5 # mess interval in minutes
 val = 100
-n_channels = 5
+n_channels = 3
 effects = {
     "Pulse": {
-        "occurances":5,
+        "occurances":2,
         "max_amplitude":1.5,   
         "interval":40
         },
@@ -73,7 +72,7 @@ effects = {
         "type":"linear"
         },
     "Seasonality": {
-        "occurances":3,
+        "occurances":2,
         "frequency_per_week":(7, 14), # min and max occurances per week
         "amplitude_range":(5, 20),
         },
@@ -116,54 +115,25 @@ X.show()
 
 
 ### Init Model
-latent_dims = n_channels * 3
-L=30
+latent_dims = 12
+L = 60
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # v = vae(n_channels, L, latent_dims)
-# v = VariationalAutoencoder(input_size = n_channels,
-#                            hidden_size = 30,
-#                            num_layers = 3,
-#                            latent_dims= latent_dims,
-#                            v_encoder = LongShort_TCVAE_Encoder, # RnnEncoder, LongShort_TCVAE_Encoder,
-#                            v_decoder = LongShort_TCVAE_Decoder, # RnnDecoder, LongShort_TCVAE_Decoder,
-#                            L = L,
-#                            slope = 0.2,
-#                            first_kernel = 21)
-# v = VQ_MST_VAE(n_channels = n_channels,
-#                            num_layers = 3,
-#                            latent_dims= 10,
-#                            v_encoder = LongShort_TCVAE_Encoder, # MST_VAE_Encoder, #LongShort_TCVAE_Encoder,
-#                            v_decoder = LongShort_TCVAE_Decoder, # MST_VAE_Decoder, #LongShort_TCVAE_Decoder,
-#                            v_quantizer = VQ_Quantizer,
-#                            L=30,
-#                            slope = 0.2,
-#                            first_kernel = 15,
-#                            commit_loss = 3.5)
 v = VariationalAutoencoder(input_size = n_channels,
+                           hidden_size = 30,
                            num_layers = 3,
                            latent_dims= latent_dims,
-                           v_encoder = MST_VAE_Encoder_Linear, # MST_VAE_Encoder_Linear, #LongShort_TCVAE_Encoder,
-                           v_decoder = MST_VAE_Decoder_Linear, # MST_VAE_Decoder_Linear, #LongShort_TCVAE_Decoder,
-                           L=L,
+                           v_encoder = LongShort_TCVAE_Encoder, # RnnEncoder, LongShort_TCVAE_Encoder,
+                           v_decoder = LongShort_TCVAE_Decoder, # RnnDecoder, LongShort_TCVAE_Decoder,
+                           L = L,
                            slope = 0.2,
-                           first_kernel = 15
-                           )
-enc = MST_VAE_Encoder_dist(     n_channels,
-                           num_layers = 3,
-                           slope = 0.2,
-                           first_kernel = 15)
-dec = MST_VAE_Decoder_dist(     n_channels,
-                           num_layers = 3,
-                           slope = 0.2,
-                           first_kernel = 15)
-
-
-v = v.to(device)
-enc = enc.to(device)
-dec = dec.to(device)
+                           first_kernel = 21)
 opt = optim.Adam(v.parameters(), lr = 0.001571)
-# torch.save(v, r'modules\mst_vae.pt')
+
+
+print(v)
+torch.save(v, r'E:\Master\VAE\modules\vae1.pt')
 
 
 # ## Split and Dataloader
@@ -175,7 +145,6 @@ opt = optim.Adam(v.parameters(), lr = 0.001571)
 # serie = torch.tensor(serie).float()
 x = torch.FloatTensor(x)
 n = x.shape[1]
-
 
 train_ = x[:, :int(0.8*n)]
 val_   = x[:, int(0.8*n):int(0.9*n)]
@@ -201,10 +170,9 @@ test_data = DataLoader(slidingWindow(test_, L),
 # In[5]:
 
 
-for epoch in range(1, 100):
-    train(v, train_data, criterion, opt, device, epoch, VQ=False)
-torch.save(v, r'modules\mst_vae_lin2.pt')
-# test(v, test_data, criterion, device)
+for epoch in range(1, 200):
+    train(v, train_data, criterion, opt, device, epoch)
+test(v, test_data, criterion, device)
 
 
 # In[ ]:
@@ -245,7 +213,7 @@ compare(train_data, v)
 
 
 compare(test_data, v)
-
+torch.save(v, r'E:\Master\VAE\modules\vae.pt')
 
 
 

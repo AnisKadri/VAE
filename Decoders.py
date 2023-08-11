@@ -436,39 +436,63 @@ class MST_VAE_Decoder_dist(nn.Module):
 
 
 class RnnDecoder(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, latent_dims, L=30, slope=0.2, first_kernel=None):
+    def __init__(self, n_channels, num_layers, latent_dims, L=30, slope=0.2, first_kernel=None, modified=False, reduction = False):
         super(RnnDecoder, self).__init__()
 
-        self.input_size = input_size
-        self.hidden_size = hidden_size
+        self.n_channels = n_channels
+#         self.hidden_size = hidden_size
         self.latent_dims = latent_dims
         self.num_layers = num_layers
         self.L = L
+        self.first_kernel = first_kernel
+        self.modified = modified
+        self.reduction = reduction
+        self.n = lin_size(L, num_layers, first_kernel)
+        
+        self.decoder_input = self.n_channels
+        factor = 2
+        
+        if self.modified:
+            factor = 2**self.num_layers
+            
+        if self.reduction:
+            factor = factor//2
+            
+        self.hidden_size = self.n_channels * factor * self.latent_dims
+
 
         # Define the linear layer for the latent space to hidden state
-        self.latent_to_hidden = nn.Linear(latent_dims, hidden_size * num_layers)
+        self.latent_to_hidden = nn.Linear(latent_dims, self.hidden_size * num_layers)
 
         # Define the LSTM layer
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=slope)
+        self.lstm = nn.LSTM(n_channels, self.hidden_size, num_layers, batch_first=True, dropout=slope)
 
         #         # Define the output layer
-        self.fc = nn.Linear(hidden_size, input_size)
+        self.fc = nn.Linear(self.hidden_size * self.latent_dims, n_channels)
 
     def forward(self, z):
         # Map the latent space vector to the initial hidden and cell states
 
-        hidden = self.latent_to_hidden(z)
+#         hidden = self.latent_to_hidden(z)
+        print("input to decoder", z.shape)
+#         print(self.latent_dims, self.hidden_size)
 
-        hidden = hidden.view(-1, self.num_layers, self.hidden_size)
+        z = z.view(z.shape[0], -1).unsqueeze(-1)
+        print("reshape z", z.shape)
 
         # Generate sequence of output tensors
         outputs = []
         #         x = torch.zeros((hidden.size(0), 1, self.input_size), device=hidden.device)
-        x = torch.zeros(hidden.shape[0], self.L, self.input_size)
-        hidden = hidden.permute(1, 0, 2)
+#         x = torch.zeros(z.shape[0], self.L, self.n_channels)
+        x = torch.zeros(z.shape[0], self.hidden_size, self.n_channels)
+        print("the new x", x.shape)
+        hidden = z.permute(1, 0, 2)
+        hidden = torch.zeros(self.num_layers, z.shape[0], self.n_channels)
+        print("the hidden", hidden.shape)
         cell = torch.zeros_like(hidden)
+        output, (hidden, cell) = self.lstm(z, (hidden,cell))
 
-        output, (hidden, cell) = self.lstm(x, (hidden, cell))
+#         output, (hidden, cell) = self.lstm(x, (hidden, cell))
 
         # Pass the output through the output layer
         output = self.fc(output)

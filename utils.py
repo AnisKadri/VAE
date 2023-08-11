@@ -12,13 +12,140 @@ from matplotlib.gridspec import GridSpec
 # from ipywidgets import interact
 # from IPython.display import display, clear_output
 import matplotlib.gridspec as gridspec
-from dataGen import Gen
-from train import stridedWindow, slidingWindow, train, criterion
+from dataGen import Gen, FastGen
+from train import *
 from torch.utils.data import Dataset, DataLoader
 from datetime import datetime
 import sys
 from functools import wraps
+from scipy.signal import butter,filtfilt
+from scipy.fft import fft, fftfreq
 
+
+def get_means_indices(label):
+    unique, idx, counts= torch.unique(label[:,0], return_inverse=True, return_counts=True)    
+    _, ind_sorted = torch.sort(idx, stable=True)
+    cum_sum = counts.cumsum(0)
+    cum_sum = torch.cat((torch.tensor([0]), cum_sum[:-1]))
+    first_indicies = ind_sorted[cum_sum]
+    return first_indicies
+
+def generate_long_data(effects, n_samples=1, periode=365, step=5, val=500, n_channels=1, effect="Seasonality", occurance=1, L=2016):
+    effects = set_effect(effect, effects, occurance)
+    
+    X_long = Gen(n_samples, periode, step, val, n_channels, effects)
+    x_long, params_long, e_params_long = X_long.parameters()
+    X_long.show()
+
+    train_data_long, val_data_long, test_data_long = create_loader_Window(x_long.squeeze(0), batch_size=5, L=L)
+    return train_data_long, val_data_long, test_data_long
+
+def generate_labeled_data(effects, n_samples=500, periode=7, step=5, val=500, n_channels=1, effect="Seasonality", occurance=1, batch_size=10):
+    effects = set_effect(effect, effects, occurance)
+    
+    X = FastGen(n_samples, periode, step, val, n_channels, effects)
+    for i in range(9):
+        print("generating: ", i)
+        Y = FastGen(n_samples, periode, step, val, n_channels, effects)    
+        X.merge(Y)
+
+    x, params, e_params = X.parameters()
+    X.show(10)
+
+    labels = extract_parameters(n_channels, e_params, effects, n_samples*10)
+    labels = add_mu_std(labels, params)
+
+    train_data, val_data, test_data = create_loader_noWindow(x, labels, batch_size=batch_size)
+    return train_data, val_data, test_data
+
+def normalize_signal(signal):
+    # Find the minimum and maximum values of the signal
+    min_value = np.min(signal)
+    max_value = np.max(signal)
+    
+    # Apply min-max normalization to scale the signal between 0 and 1
+    normalized_signal = (signal - min_value) / (max_value - min_value)
+    
+    return normalized_signal
+
+def perform_fft(normalized_signal, sampling_interval, n_best):
+    time_scaling = 1 / (24 * 60 * 60)
+
+    # Perform the FFT
+    fft_signal = fft(normalized_signal)
+    freqs = fftfreq(len(normalized_signal), d=sampling_interval * time_scaling) 
+    
+    return fft_signal, freqs
+
+def get_n_dominant(fft_signal, freqs, n_best):
+    # Find the dominant frequency and corresponding amplitude
+    idx = np.argsort(np.abs(fft_signal))[::-1][:n_best]
+    dominant_frequency = freqs[idx]
+    dominant_amplitude = np.abs(fft_signal[idx])
+    
+    return dominant_frequency, dominant_amplitude
+
+def fft_freq(signal, sampling_interval, n_best):
+    normalized_signal = normalize_signal(signal)
+#     normalized_signal = signal
+    fft_signal, freqs = perform_fft(normalized_signal, sampling_interval, n_best)
+    return fft_signal, freqs
+
+def plot_fft(normalized_signal, fft_signal, freqs):
+    # Plotting the signal and its spectrum
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+
+    ax1.plot(normalized_signal)
+    ax1.set_xlabel('Time')
+    ax1.set_ylabel('Amplitude')
+    ax1.set_title('Time-domain Signal')
+
+    ax2.plot(np.abs(fft_signal))
+    ax2.set_xlabel('Frequency (Hz)')
+    ax2.set_ylabel('Amplitude')
+    ax2.set_title('Frequency-domain Spectrum')
+
+    plt.tight_layout()
+    plt.show()
+    dominant_frequency, dominant_amplitude = get_n_dominant(fft_signal, freqs, 20)
+    print("Dominant Frequency:", dominant_frequency, "Hz")
+    print("Dominant Amplitude:", dominant_amplitude)
+
+def butter_lowpass_filter(data, cutoff, fs, order):
+    nyq = 0.5 * fs  # Nyquist Frequency
+    normal_cutoff = cutoff / nyq
+    print(normal_cutoff)
+    # Get the filter coefficients 
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    y = filtfilt(b, a, data)
+    return y
+
+def denoise(ts):
+    x_len = len(ts[0])
+    noisy_signal = np.array(ts)
+    
+    # Filter requirements.
+    T = 365*24*60*60          # Sample Period
+    fs = 1/(5)       # sample rate, Hz
+    cutoff = 0.003      # desired cutoff frequency of the filter, Hz ,      slightly higher than actual 1.2 Hz
+    nyq = 0.5 * fs  # Nyquist Frequency
+    order = 2       # sin wave can be approx represented as quadratic
+    n = int(T * fs) # total number of samples
+    
+    # Filter the data, and plot both the original and filtered signals.
+    y = butter_lowpass_filter(noisy_signal, cutoff, fs, order)
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(noisy_signal.T, label='Noisy Signal')
+    plt.plot(y.T, label='Filtered Signal')
+    plt.xlabel('Time')
+    plt.ylabel('Amplitude')
+    plt.legend()
+    plt.xlim(0,1000)
+    plt.grid(True)
+    plt.show()
+    
+    return y
 
 
 def suppress_prints(func):
@@ -29,7 +156,7 @@ def suppress_prints(func):
 
         try:
             # Replace sys.stdout with a dummy stream that discards output
-            dummy_stream = open("/dev/null", "w")  # Use "nul" on Windows
+            dummy_stream = open("NUL", "w")  # Use "nul" on Windows
             sys.stdout = dummy_stream
             return func(*args, **kwargs)
         finally:
@@ -730,105 +857,130 @@ def new_experiment_VQ(data, model):
 
     widgets.VBox([widgets.HBox([grid_box]), out])
 
-def set_effect(effect):
+def no_effects(effects):
+    occ = "occurances"
+    for effect in effects:
+        effects[effect][occ] = 0
+        
+def set_effect(effect, effects, n):
+    
+    occ = "occurances"
+    considered_effects = ["no_effect", "Trend", "Seasonality", "both"]
+    no_effects(effects)
+    
+    if effect not in considered_effects:
+        print(effect, "is not in the list of effects")
+        return effects
+    
     if effect == "no_effect":
-        effects = {
-            "Pulse": {
-                "occurances": 0,
-                "max_amplitude": 1.5,
-                "interval": 40
-            },
-            "Trend": {
-                "occurances": 0,
-                "max_slope": 0.005,
-                "type": "linear"
-            },
-            "Seasonality": {
-                "occurances": 0,
-                "frequency_per_week": (7, 14),  # min and max occurances per week
-                "amplitude_range": (5, 20),
-            },
-            "std_variation": {
-                "occurances": 0,
-                "max_value": 10,
-                "interval": 1000,
-            },
-            "channels_coupling": {
-                "occurances": 0,
-                "coupling_strengh": 20
-            },
-            "Noise": {
-                "occurances": 0,
-                "max_slope": 0.005,
-                "type": "linear"
-            }
-        }
-    elif effect == "trend":
-        effects = {
-            "Pulse": {
-                "occurances": 0,
-                "max_amplitude": 1.5,
-                "interval": 40
-            },
-            "Trend": {
-                "occurances": 1,
-                "max_slope": 0.005,
-                "type": "linear"
-            },
-            "Seasonality": {
-                "occurances": 0,
-                "frequency_per_week": (7, 14),  # min and max occurances per week
-                "amplitude_range": (5, 20),
-            },
-            "std_variation": {
-                "occurances": 0,
-                "max_value": 10,
-                "interval": 1000,
-            },
-            "channels_coupling": {
-                "occurances": 0,
-                "coupling_strengh": 20
-            },
-            "Noise": {
-                "occurances": 0,
-                "max_slope": 0.005,
-                "type": "linear"
-            }
-        }
-    elif effect == "seasonality":
-        effects = {
-            "Pulse": {
-                "occurances": 0,
-                "max_amplitude": 1.5,
-                "interval": 40
-            },
-            "Trend": {
-                "occurances": 0,
-                "max_slope": 0.005,
-                "type": "linear"
-            },
-            "Seasonality": {
-                "occurances": 1,
-                "frequency_per_week": (7, 14),  # min and max occurances per week
-                "amplitude_range": (5, 20),
-            },
-            "std_variation": {
-                "occurances": 0,
-                "max_value": 10,
-                "interval": 1000,
-            },
-            "channels_coupling": {
-                "occurances": 0,
-                "coupling_strengh": 20
-            },
-            "Noise": {
-                "occurances": 0,
-                "max_slope": 0.005,
-                "type": "linear"
-            }
-        }
-
+        return effects
+            
+    elif effect == "both":
+        effects["Trend"][occ] = n
+        effects["Seasonality"][occ] = n
+        
+    else:
+        effects[effect][occ] = n
     return effects
+# def set_effect(effect):
+#     if effect == "no_effect":
+#         effects = {
+#             "Pulse": {
+#                 "occurances": 0,
+#                 "max_amplitude": 1.5,
+#                 "interval": 40
+#             },
+#             "Trend": {
+#                 "occurances": 0,
+#                 "max_slope": 0.005,
+#                 "type": "linear"
+#             },
+#             "Seasonality": {
+#                 "occurances": 0,
+#                 "frequency_per_week": (7, 14),  # min and max occurances per week
+#                 "amplitude_range": (5, 20),
+#             },
+#             "std_variation": {
+#                 "occurances": 0,
+#                 "max_value": 10,
+#                 "interval": 1000,
+#             },
+#             "channels_coupling": {
+#                 "occurances": 0,
+#                 "coupling_strengh": 20
+#             },
+#             "Noise": {
+#                 "occurances": 0,
+#                 "max_slope": 0.005,
+#                 "type": "linear"
+#             }
+#         }
+#     elif effect == "trend":
+#         effects = {
+#             "Pulse": {
+#                 "occurances": 0,
+#                 "max_amplitude": 1.5,
+#                 "interval": 40
+#             },
+#             "Trend": {
+#                 "occurances": 1,
+#                 "max_slope": 0.005,
+#                 "type": "linear"
+#             },
+#             "Seasonality": {
+#                 "occurances": 0,
+#                 "frequency_per_week": (7, 14),  # min and max occurances per week
+#                 "amplitude_range": (5, 20),
+#             },
+#             "std_variation": {
+#                 "occurances": 0,
+#                 "max_value": 10,
+#                 "interval": 1000,
+#             },
+#             "channels_coupling": {
+#                 "occurances": 0,
+#                 "coupling_strengh": 20
+#             },
+#             "Noise": {
+#                 "occurances": 0,
+#                 "max_slope": 0.005,
+#                 "type": "linear"
+#             }
+#         }
+#     elif effect == "seasonality":
+#         effects = {
+#             "Pulse": {
+#                 "occurances": 0,
+#                 "max_amplitude": 1.5,
+#                 "interval": 40
+#             },
+#             "Trend": {
+#                 "occurances": 0,
+#                 "max_slope": 0.005,
+#                 "type": "linear"
+#             },
+#             "Seasonality": {
+#                 "occurances": 1,
+#                 "frequency_per_week": (7, 14),  # min and max occurances per week
+#                 "amplitude_range": (5, 20),
+#             },
+#             "std_variation": {
+#                 "occurances": 0,
+#                 "max_value": 10,
+#                 "interval": 1000,
+#             },
+#             "channels_coupling": {
+#                 "occurances": 0,
+#                 "coupling_strengh": 20
+#             },
+#             "Noise": {
+#                 "occurances": 0,
+#                 "max_slope": 0.005,
+#                 "type": "linear"
+#             }
+#         }
+
+#     return effects
 def generate_data(n_channels, effect, L, periode=365, step=5, val=500 ):
     effects = set_effect(effect)
     X = Gen(periode, step, val, n_channels, effects)
@@ -953,40 +1105,54 @@ def get_index_from_date(date, ref_time = '2023-03-01T00:00:00', step = 5):
     return index
 
 # look for the index of the first zero element in the given tensor
+@suppress_prints
 def get_next_empty_index(param_tensor):
-    return (param_tensor == 0).nonzero()[0].item()
+    print("the tensor in question: ", param_tensor)
+    print("step1 :", param_tensor == 0)
+    print("step2 :", (param_tensor == 0).nonzero())
+    print("step3 :", (param_tensor == 0).nonzero()[0])
+    print("step4 :", (param_tensor == 0).nonzero()[0].item())
+    value = (param_tensor == 0).nonzero()[0].item()
+    return value
 
 @suppress_prints
 def extract_param_per_effect(labels, e_params, effect_n, effect):
     print("###################")
     print("Effect: ", effect)
+    if labels.dim() == 2: labels.unsqueeze(0)
+    n_samples= labels.shape[0]
     
-    # for the givven effect, first loop through the channel numbers where this effect occures
-    for (i, channel) in enumerate(e_params[effect]["channel"]):
-        print("//////////////////")
-        print("Channel: ", channel)
-        # for each occurance of this effect loop through all the parameters of this effect 
-        for param_type in e_params[effect]:
-            # skip the channel list
-            if param_type != "channel":
-                print("----------------------")
-                
-                print("Parameter: ", param_type)
-                
-                # look for the next empty slot in the labels tensor
-                next_idx = get_next_empty_index(labels[channel][effect_n])
-                print("Correspending tensor: ", labels[channel][effect_n])
-                print("Next Index: ", next_idx)
-                
-                #get the value of the parameter
-                val = e_params[effect][param_type][i]
-                
-                # if the parameter is the index where it happens (date string) transform it to a an int
-                if param_type == "index": val = get_index_from_date(val)
-                print("Value:", val)
-                
-                #fill the labels tensor
-                labels[channel][effect_n][next_idx] = val
+    for sample in range(n_samples):
+        print("########Sample########### -> ",sample) 
+        # for the givven effect, first loop through the channel numbers where this effect occures
+        for (i, channel) in enumerate(e_params[effect]["channel"][sample]):
+            print("//////////////////")            
+            print("Channel: ", channel)
+            
+            # for each occurance of this effect loop through all the parameters of this effect 
+            for param_type in e_params[effect]:
+                # skip the channel list
+                if param_type not in ["channel", "phaseshift", "index"]:
+                    print("----------------------")
+
+                    print("Parameter: ", param_type)
+                    print("label shape: ", labels.shape)
+
+                    # look for the next empty slot in the labels tensor
+                    next_idx = get_next_empty_index(labels[sample][channel][effect_n])
+                    print("Correspending tensor: ", labels[sample][channel][effect_n]) 
+                    print("Next Index: ", next_idx)
+
+                    #get the value of the parameter
+                    val = e_params[effect][param_type][sample][i]                  
+
+                    # if the parameter is the index where it happens (date string) transform it to a an int
+                    if param_type == "index": val = get_index_from_date(val)
+                    
+                    print("Value:", val)
+
+                    #fill the labels tensor
+                    labels[sample][channel][effect_n][next_idx] = val
                 
 def get_max_occ(effects):
     max_occ = 0
@@ -995,40 +1161,85 @@ def get_max_occ(effects):
             max_occ = effects[effect]["occurances"]
 
     return max_occ
-
+@suppress_prints
 def squeeze_labels(labels):
     new_labels = []
     idxs = labels.nonzero()
     
     for index in idxs:
-        ch = index[0]    
-        new_val = [ch, labels[index[0], index[1], index[2]]]
+        print(index)
+        sample = index[0]
+        ch = index[1]    
+        new_val = [sample, ch, labels[index[0], index[1], index[2], index[3]]]
         new_labels.append(new_val)
         
     new_labels = torch.tensor(new_labels)
     return new_labels
 
-def extract_parameters(n_channels, e_params, effects):
+def extract_parameters(n_channels, e_params, effects, n_samples= None):
     # create the labels tensor
     n_effects = len(effects)
     max_occ = get_max_occ(effects)
-    labels = torch.zeros((n_channels, n_effects, 4 * max_occ))
+    if n_samples==None:
+        labels = torch.zeros((n_channels, n_effects, 4 * max_occ))
+    else:
+        labels = torch.zeros((n_samples, n_channels, n_effects, 4 * max_occ))
     
     # loop through the effects and extract their paramaters
     for (effect_n, effect) in enumerate(e_params):
-        if effect != "Channels_Coupling":
+        if effect != "Channels_Coupling" and e_params[effect]["channel"] !=[]:
             extract_param_per_effect(labels, e_params, effect_n, effect)
     labels = squeeze_labels(labels)    
         
     return labels
 
-def add_mu_std(labels, params):
-    mu = torch.FloatTensor(params["mu"]).mean(dim=1)
-    std = torch.diagonal(torch.FloatTensor(params["cov"])).mean(dim=0)
-    mu = torch.stack([torch.arange(len(mu)), mu], dim=1)
-    std = torch.stack([torch.arange(len(std)), std], dim=1)
-    mu_std = torch.cat((mu, std), dim=0).view(-1,2)
+def reshape_params(parameter):
+    # Get the shape of the original array
+    original_shape = parameter.shape
+
+    # Get the number of rows and columns in the original array
+    num_rows, num_cols = original_shape
+
+    # Create indices arrays
+    row_indices = torch.arange(num_rows).unsqueeze(1).repeat(1, num_cols)
+    col_indices = torch.arange(num_cols).unsqueeze(0).repeat(num_rows, 1)
+
+    # Flatten the original array and concatenate indices
+    flat_array = parameter.flatten()
+    indices_array = torch.stack((row_indices.flatten(), col_indices.flatten()), dim=1)
+
+    # Concatenate indices array with the flat array
+    combined_array = torch.cat((indices_array, flat_array.unsqueeze(1)), dim=1)
+    
+    return combined_array
+
+def add_mu_std(labels, params): 
+    mu = torch.FloatTensor(params["mu"]).mean(dim=2)
+    mu = reshape_params(mu)
+    print(mu.shape)
+    print(mu)
+
+    std = torch.FloatTensor(params["cov"]).mean(dim=2)
+    std = reshape_params(std)
+
+#     mu = torch.stack([torch.arange(len(mu)), mu], dim=2)
+#     std = torch.stack([torch.arange(len(std)), std], dim=1)
+    mu_std = torch.cat((mu, std), dim=0).view(-1,3)
     labels = torch.cat((mu_std, labels), dim=0)
+
+#     sorted_indices = torch.argsort(labels[:, :2], dim=0, stable=True)
+#     labels = labels[sorted_indices]
+#     print(labels[:, 1])
+#     print(labels[:, 1].sort(stable=True))
+#     print(labels[:, 1].sort(stable=True)[1])
+    labels = labels[labels[:, 1].sort(stable=True)[1]]
     labels = labels[labels[:, 0].sort(stable=True)[1]]
+    n_samples = len(labels[:,0].unique())
+    labels = torch.tensor_split(labels, n_samples, dim=0)
+#     for (i, label) in enumerate(labels):
+        
+#         print(i, label.shape)
+    labels = torch.stack(labels)[..., 1:]
+#     labels = labels[:, None, :]
     
     return labels
