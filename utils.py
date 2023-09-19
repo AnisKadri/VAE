@@ -18,8 +18,10 @@ from torch.utils.data import Dataset, DataLoader
 from datetime import datetime
 import sys
 from functools import wraps
-from scipy.signal import butter,filtfilt
+from scipy.signal import butter#,filtfilt
 from scipy.fft import fft, fftfreq
+from torchaudio.functional import filtfilt
+import random
 
 
 def get_means_indices(label):
@@ -30,17 +32,20 @@ def get_means_indices(label):
     first_indicies = ind_sorted[cum_sum]
     return first_indicies
 
-def generate_long_data(effects, n_samples=1, periode=365, step=5, val=500, n_channels=1, effect="Seasonality", occurance=1, L=2016):
+def generate_long_data(effects, n_samples=1, periode=365, step=5, val=500, n_channels=1, effect="Seasonality", occurance=1, L=2016, batch_size=50, split=(0.8, 0.9), return_gen=False):
     effects = set_effect(effect, effects, occurance)
     
     X_long = Gen(n_samples, periode, step, val, n_channels, effects)
     x_long, params_long, e_params_long = X_long.parameters()
     X_long.show()
 
-    train_data_long, val_data_long, test_data_long = create_loader_Window(x_long.squeeze(0), batch_size=5, L=L)
-    return train_data_long, val_data_long, test_data_long
+    train_data_long, val_data_long, test_data_long = create_loader_Window(x_long.squeeze(0), batch_size=batch_size, L=L, split=split)
+    if return_gen == False:
+        return train_data_long, val_data_long, test_data_long
+    else:
+        return train_data_long, val_data_long, test_data_long, X_long
 
-def generate_labeled_data(effects, n_samples=500, periode=7, step=5, val=500, n_channels=1, effect="Seasonality", occurance=1, batch_size=10):
+def generate_labeled_data(effects, n_samples=500, periode=7, step=5, val=500, n_channels=1, effect="Seasonality", occurance=1, batch_size=10, split=(0.8, 0.9)):
     effects = set_effect(effect, effects, occurance)
     
     X = FastGen(n_samples, periode, step, val, n_channels, effects)
@@ -55,7 +60,7 @@ def generate_labeled_data(effects, n_samples=500, periode=7, step=5, val=500, n_
     labels = extract_parameters(n_channels, e_params, effects, n_samples*10)
     labels = add_mu_std(labels, params)
 
-    train_data, val_data, test_data = create_loader_noWindow(x, labels, batch_size=batch_size)
+    train_data, val_data, test_data = create_loader_noWindow(x, labels, batch_size=batch_size, split=split)
     return train_data, val_data, test_data
 
 def normalize_signal(signal):
@@ -114,15 +119,18 @@ def plot_fft(normalized_signal, fft_signal, freqs):
 def butter_lowpass_filter(data, cutoff, fs, order):
     nyq = 0.5 * fs  # Nyquist Frequency
     normal_cutoff = cutoff / nyq
-    print(normal_cutoff)
+#     print(normal_cutoff)
     # Get the filter coefficients 
     b, a = butter(order, normal_cutoff, btype='low', analog=False)
-    y = filtfilt(b, a, data)
+    b = torch.FloatTensor(b)
+    a = torch.FloatTensor(a)
+    y = filtfilt(data, b, a)
     return y
 
 def denoise(ts):
-    x_len = len(ts[0])
-    noisy_signal = np.array(ts)
+#     x_len = len(ts[0])
+#     noisy_signal = np.array(ts)
+    noisy_signal = ts.cpu()
     
     # Filter requirements.
     T = 365*24*60*60          # Sample Period
@@ -135,17 +143,17 @@ def denoise(ts):
     # Filter the data, and plot both the original and filtered signals.
     y = butter_lowpass_filter(noisy_signal, cutoff, fs, order)
 
-    plt.figure(figsize=(10, 6))
-    plt.plot(noisy_signal.T, label='Noisy Signal')
-    plt.plot(y.T, label='Filtered Signal')
-    plt.xlabel('Time')
-    plt.ylabel('Amplitude')
-    plt.legend()
-    plt.xlim(0,1000)
-    plt.grid(True)
-    plt.show()
+#     plt.figure(figsize=(10, 6))
+#     plt.plot(noisy_signal.T, label='Noisy Signal')
+#     plt.plot(y.T, label='Filtered Signal')
+#     plt.xlabel('Time')
+#     plt.ylabel('Amplitude')
+#     plt.legend()
+#     plt.xlim(0,1000)
+#     plt.grid(True)
+#     plt.show()
     
-    return y
+    return y.to("cuda")
 
 
 def suppress_prints(func):
@@ -865,8 +873,11 @@ def no_effects(effects):
 def set_effect(effect, effects, n):
     
     occ = "occurances"
-    considered_effects = ["no_effect", "Trend", "Seasonality", "both"]
+    considered_effects = ["no_effect", "Pulse", "Trend", "Seasonality", "both", "all"]
     no_effects(effects)
+    
+    if effect == "random":
+        effect = random.choice(considered_effects[1:])
     
     if effect not in considered_effects:
         print(effect, "is not in the list of effects")
@@ -876,6 +887,10 @@ def set_effect(effect, effects, n):
         return effects
             
     elif effect == "both":
+        effects["Trend"][occ] = n
+        effects["Seasonality"][occ] = n
+    elif effect == "all":
+        effects["Pulse"][occ] = n
         effects["Trend"][occ] = n
         effects["Seasonality"][occ] = n
         

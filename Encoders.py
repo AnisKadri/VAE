@@ -141,7 +141,7 @@ class TCVAE_Encoder_unified(nn.Module):
         if not self.modified:
             mu = mu.view(mu.shape[0], self.n_channels, -1)
             logvar = logvar.view(logvar.shape[0], self.n_channels, -1)
-        #             print("Encoder mu after reshape ", mu.shape)
+#             print("Encoder mu after reshape ", mu.shape)
         # mu.reshape
 
         return mu, logvar

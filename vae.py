@@ -111,15 +111,15 @@ class VQ_Quantizer(nn.Module):
 
     def forward(self, x):
         # x : BCL -> BLC
-        #         print(x.shape)
+#         print("Entering the Quantizer", x.shape)
         x_shape = x.shape
         x = x.permute(0, 2, 1).contiguous()
 
-        #         print(x.shape)
+#         print("Permutation in the Quantizer", x.shape)
 
         # flaten the input to have the Channels as embedding space
         x_flat = x.view(-1, self._dim_embed)
-        #         print(x_flat.shape)
+#         print("Flatten in the Quantizer", x_flat.shape)
 
         # Calculate the distance to embeddings
 
@@ -134,21 +134,22 @@ class VQ_Quantizer(nn.Module):
         #         print(dist.shape)
 
         embed_indices = torch.argmin(dist, dim=1).unsqueeze(1)
-        #         print("embed indices",embed_indices)
+#                 print("embed indices",embed_indices)
         if self.training:
             noise = torch.randn(embed_indices.shape) * self._std
             noise = torch.round(noise).to(torch.int32).to(embed_indices)
             new_embed_indices = embed_indices + noise
             new_embed_indices = torch.clamp(new_embed_indices, max=self._num_embed - 1, min=0)
-            # embed_indices = new_embed_indices
+            embed_indices = new_embed_indices
         # print("noise ",noise.shape)
-        # print("both together",new_embed_indices)
+#         print("The Embeding indices",embed_indices.flatten(), embed_indices.shape)
+#         print("Embedding indices reshaped", embed_indices.view(50, -1))
         embed_Matrix = torch.zeros_like(dist)
         #         embed_Matrix = torch.zeros(embed_indices.shape[0], self._num_embed).to(x)
         #         print(embed_Matrix.shape)
         embed_Matrix.scatter_(1, embed_indices, 1)
         #         print("embed_indices", embed_indices)
-        #         print("Embedding ", embed_Matrix.shape, embed_Matrix)
+#         print("Embedding ", embed_Matrix.shape, embed_Matrix)
         #         print("codebook", self._embedding.weight.shape, self._embedding.weight)
 
         # get the corresponding e vectors
@@ -189,7 +190,7 @@ class VQ_Quantizer(nn.Module):
         quantizer = quantizer.permute(0, 2, 1).contiguous()
         #         print("quantizer ", quantizer.shape)
 
-        return quantizer, loss
+        return quantizer, loss, embed_indices
 
 class VQ_Quantizer__spread(nn.Module):
     def __init__(self, num_embed, dim_embed, commit_loss, decay, epsilon=1e-5):
@@ -326,7 +327,7 @@ class VQ_MST_VAE(nn.Module):
                                        self._first_kernel, self._modified, self._reduction)
         self.decoder = self._v_decoder(self._n_channels, self._num_layers, self._latent_dims, self._L, self._slope,
                                        self._first_kernel, self._modified, self._reduction)
-        self.quantizer = self._v_quantizer(self._num_embed, self._latent_dims, self._commit_loss, decay=0.99,
+        self.quantizer = self._v_quantizer(100, self._latent_dims, self._commit_loss, decay=0.99,
                                            epsilon=1e-5)
 
         self.bn = nn.BatchNorm1d(self._num_embed)
@@ -335,8 +336,18 @@ class VQ_MST_VAE(nn.Module):
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
+    
+    def calculate_lambda(self, perceptual_loss, gan_loss):
+        *_, last_layer = self.decoder.children()
+        last_layer_weight = last_layer.weight
+        perceptual_loss_grads = torch.autograd.grad(perceptual_loss, last_layer_weight, retain_graph=True)[0]
+        gan_loss_grads = torch.autograd.grad(gan_loss, last_layer_weight, retain_graph=True)[0]
 
-    def forward(self, x):
+        λ = torch.norm(perceptual_loss_grads) / (torch.norm(gan_loss_grads) + 1e-4)
+        λ = torch.clamp(λ, 0, 1e2).detach()
+        return 0.8 * λ
+
+    def forward(self, x, split_loss=False, ouput_indices=False):
         mu, logvar = self.encoder(x)
 
         z = self.reparametrization_trick(mu, logvar)
@@ -345,7 +356,7 @@ class VQ_MST_VAE(nn.Module):
 #         is_larger = torch.all(torch.gt(z[0], self.quantizer._embedding.weight))
 #         print(z.shape)
 #         print("Is encoder output larger than the set of vectors?", is_larger)
-        e, loss_quantize = self.quantizer(z)
+        e, loss_quantize, indices = self.quantizer(z)
 
 #         print("----------------Encoder Output-------------")
 #         print("mu and logvar", mu.shape, logvar.shape)
@@ -358,13 +369,17 @@ class VQ_MST_VAE(nn.Module):
         #         mu_dec, logvar_dec = self.decoder(e)
         #         x_rec = self.reparametrization_trick(mu_dec, mu_dec)
         x_rec, mu_rec, logvar_rec = self.decoder(e)
-        loss_rec = F.mse_loss(x_rec, x, reduction='sum')
+        loss_rec = F.mse_loss(x_rec-1, x-1, reduction='sum')
         loss = loss_rec + loss_quantize
 
 #         print("----------------Decoding-------------")
 #         print("----------------Decoder Output-------------")
 #         # print("mu and logvar Decoder", mu_dec.shape, logvar_dec.shape)
 #         print("rec shape", x_rec.shape)
+        if split_loss == True:
+            return x_rec, loss_rec, loss_quantize, mu, logvar, mu_rec, logvar_rec, e
+        if ouput_indices == True:
+            return x_rec, loss, mu, logvar, mu_rec, logvar_rec, e, indices        
         return x_rec, loss, mu, logvar, mu_rec, logvar_rec, e
 
     # In[12]:

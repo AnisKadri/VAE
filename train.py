@@ -57,6 +57,7 @@ class slidingWindow(Dataset):
 
     def __len__(self):
         return self.data.shape[-1] - self.L
+    
 
         
 class stridedWindow(Dataset):
@@ -90,13 +91,14 @@ class stridedWindow(Dataset):
         #     return self.data.shape[0] - self.L
 
 
-def create_loader_noWindow(x, labels, L=2016, window=noWindow, batch_size=10, shuffle=True):
+def create_loader_noWindow(x, labels, L=2016, window=noWindow, batch_size=10, shuffle=True, split=(0.8, 0.9)):
     x = torch.FloatTensor(x)
     n = x.shape[0]
+    train_split, test_split = split
 
-    train_ , train_labels = x[:int(0.8*n)]           , labels[:int(0.8*n)]
-    val_   , val_labels   = x[int(0.8*n):int(0.9*n)] , labels[int(0.8*n):int(0.9*n)]
-    test_  , test_labels  = x[int(0.9*n):]           , labels[int(0.9*n):]
+    train_ , train_labels = x[:int(train_split*n)]           , labels[:int(train_split*n)]
+    val_   , val_labels   = x[int(train_split*n):int(test_split*n)] , labels[int(train_split*n):int(test_split*n)]
+    test_  , test_labels  = x[int(test_split*n):]           , labels[int(test_split*n):]
 
 
     train_data = DataLoader(window(train_, train_labels), # slidingWindow, stridedWindow
@@ -113,14 +115,15 @@ def create_loader_noWindow(x, labels, L=2016, window=noWindow, batch_size=10, sh
                             )
     return train_data, val_data, test_data
 
-def create_loader_Window(x, L=2016, window=slidingWindow, batch_size=10, shuffle=False):
+def create_loader_Window(x, L=2016, window=slidingWindow, batch_size=10, shuffle=False, split=(0.8, 0.9)):
     # from train import noWindow
     x = torch.FloatTensor(x)
     n = x.shape[-1]
+    train_split, test_split = split
 
-    train_ = x[..., :int(0.8*n)]           
-    val_   = x[..., int(0.8*n):int(0.9*n)] 
-    test_  = x[..., int(0.9*n):]           
+    train_ = x[..., :int(train_split*n)]           
+    val_   = x[..., int(train_split*n):int(test_split*n)] 
+    test_  = x[..., int(test_split*n):]           
 
 
     train_data = DataLoader(window(train_, L=L), # slidingWindow, stridedWindow
@@ -201,6 +204,8 @@ def train(model, train_loader, criterion, optimizer, device, epoch, VQ=True):
             loss = criterion(x_rec * v, data[:, :, 0], mu, logvar)
         # print(x_rec.shape)
         # print(data[:, :, 0].shape)
+#         if errD != None:
+#             loss += errD
         loss.backward()
 
         optimizer.step()
@@ -254,9 +259,9 @@ def tune(model, train_loader, criterion, optimizer, device, epoch, VQ=True):
         # print(data[:, :, 0].shape)
 #         print(e.shape)
 #         print(quantizer_output.shape)
-        rec = torch.cat((rec, (x_rec*v).view(n_channels, -1)), dim=1)
-        x = torch.cat((x, (data*v).view(n_channels, -1)), dim=1)
-        quantizer_output = torch.cat((quantizer_output, e), dim=0)
+#         rec = torch.cat((rec, (x_rec*v).view(n_channels, -1)), dim=1)
+#         x = torch.cat((x, (data*v).view(n_channels, -1)), dim=1)
+#         quantizer_output = torch.cat((quantizer_output, e), dim=0)
 #         print(quantizer_output.shape)
         loss.backward()
 
@@ -268,7 +273,7 @@ def tune(model, train_loader, criterion, optimizer, device, epoch, VQ=True):
                        100. * batch_idx / len(train_loader), loss.item() / len(data)))
     print('====> Epoch: {} Average loss: {:.4f}'.format(epoch, train_loss / len(train_loader.dataset)))
 
-    return x, rec, quantizer_output
+    return loss#, x, rec, quantizer_output
 
 ### Cost function
 

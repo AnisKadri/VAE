@@ -70,10 +70,27 @@ class Gen():
         self.add_effects(self.effects) 
         
         # generate the different timeseries: multivariate normal dist
-        self.x = np.array([np.random.multivariate_normal(self.mu[:,obs], np.diag(self.cov[:,obs]).astype(np.float16)) for obs in range(self.n)]).T
+        self.sample()
+#         self.x = np.array([np.random.multivariate_normal(self.mu[:,obs], np.diag(self.cov[:,obs]).astype(np.float16)) for obs in range(self.n)]).T
+        
+#         self.add_noise()
+#         self.x = np.reshape(self.x, (n_samples, nchannels, -1))
+        
+#         self.params = {
+#             "n": self.n,
+#             "nchannels":self.nchannels,
+#             "n_samples":self.n_samples,
+
+#             "mu":np.reshape(self.mu, (self.n_samples, self.nchannels, -1)),
+#             "cov":np.reshape(self.cov, (self.n_samples, self.nchannels, -1))
+#         }
+    
+    def sample(self):
+        self.x = np.array([np.random.multivariate_normal(self.mu[:,obs], np.diag(self.cov[:,obs]).astype(np.float16))
+                           for obs in range(self.n)]).T
         
         self.add_noise()
-        self.x = np.reshape(self.x, (n_samples, nchannels, -1))
+        self.x = np.reshape(self.x, (self.n_samples, self.nchannels, -1))
         
         self.params = {
             "n": self.n,
@@ -83,8 +100,7 @@ class Gen():
             "mu":np.reshape(self.mu, (self.n_samples, self.nchannels, -1)),
             "cov":np.reshape(self.cov, (self.n_samples, self.nchannels, -1))
         }
-    
-    
+        
     #plots the generated data
     def show(self, n_samples=None): 
         self.plot_time_series("Generated MTS", n_samples)
@@ -121,6 +137,7 @@ class Gen():
         occ = params["occurances"]    # number of Pulses.
         amp = params["max_amplitude"] # max amplitude of the pulse
         interval = params["interval"] # length of interval on which pulse will be applied
+        pulse_start = params["start"]
         
         # transformation array to map the effect on the corresponding channels in each sample
         transform = np.repeat(np.arange(0, self.n_samples * self.nchannels, step=self.nchannels), occ)
@@ -128,10 +145,19 @@ class Gen():
         
         ### create randomised Pulses parameters       
         channels = np.random.randint(self.nchannels, size=self.n_samples* occ) + transform # On which channel will the effect be applied.        
-        start_idxs = np.random.randint(self.n - interval, size=self.n_samples* occ) # At which index will the Pulse start.
+        if pulse_start == None:
+            start_idxs = np.random.randint(self.n - interval, size=self.n_samples* occ) # At which index will the Pulse start.
+        else:
+            if pulse_start + interval > self.n:
+                print("pulse start index adjusted to the max value (start + interval exceed time series range!)")
+                pulse_start = self.n - interval
+            if pulse_start < 0:
+                print("pulse start index adjusted to 0 (start is negative!)")
+                pulse_start = 0
+            start_idxs = int(pulse_start) * np.ones(self.n_samples* occ, dtype=np.int8)
+            
         end_idxs = start_idxs + np.random.randint(interval, size=self.n_samples* occ) # At which index will the Pulse end.
-        amplitude = np.random.uniform(low = -amp, high = amp, size=self.n_samples* occ) # How strong is the Pulse.
-        
+        amplitude = np.random.uniform(low = -amp, high = amp, size=self.n_samples* occ) # How strong is the Pulse.        
         
         #save the Pulses parameters
         idxs_to_time = self.reference_time + (start_idxs * self.step).astype('timedelta64[m]')
@@ -155,13 +181,24 @@ class Gen():
         occ = params["occurances"]  # number of Trends.   
         slope = params["max_slope"] # Max slope of the Trends  
         trend_type = params["type"] # linear or quadratic or mixed trends
+        trend_start= params["start"]
         
         # transformation array to map the effect on the corresponding channels in each sample
         transform = np.repeat(np.arange(0, self.n_samples * self.nchannels, step=self.nchannels), occ)
         
         ### create randomised Trends parameters
         channels = np.random.randint(self.nchannels, size=self.n_samples* occ) + transform # On which channel will the Trend be applied.
-        idxs = np.random.randint(self.n, size=self.n_samples* occ) # At which index will the Trend start.        
+        if trend_start == None:
+            idxs = np.random.randint(self.n, size=self.n_samples* occ) # At which index will the Trend start.
+        else:
+            if trend_start > self.n:
+                print("trend start index adjusted to 80% of time series (start + interval exceed time series range!)")
+                trend_start = self.n*0.8
+            if trend_start < 0:
+                print("trend start index adjusted to 0 (start is negative!)")
+                trend_start = 0
+            idxs = int(trend_start) * np.ones(self.n_samples* occ, dtype=np.int8)
+        
         slopes = np.random.uniform(low = -slope, high = slope, size=self.n_samples* occ)  # Slope of the Trend.
         
         
@@ -193,6 +230,7 @@ class Gen():
         occ = params["occurances"] # number of Seasonalities.
         freq = params["frequency_per_week"] # frequency per Week
         amp = params["amplitude_range"] # max amplitudes per week
+        season_start = params["start"]
         
         # transformation array to map the effect on the corresponding channels in each sample
         transform = np.repeat(np.arange(0, self.n_samples * self.nchannels, step=self.nchannels), occ)
@@ -203,6 +241,16 @@ class Gen():
         amps = np.random.randint(low = amp[0], high = amp[1], size=self.n_samples* occ) # max amplitude 
         phases = np.random.randint(180, size=self.n_samples* occ) # shift to be applied
         
+        if season_start == None:
+            idxs = np.random.randint(self.n, size=self.n_samples* occ) # At which index will the Trend start.
+        else:
+            if season_start > self.n:
+                print("season start index adjusted to 80% of time series (start + interval exceed time series range!)")
+                season_start = self.n*0.8
+            if season_start < 0:
+                print("season start index adjusted to 0 (start is negative!)")
+                season_start = 0
+            idxs = int(season_start) * np.ones(self.n_samples* occ, dtype=np.int8)
 
         #save the Trends parameters
         self.effects_params["Seasonality"]["channel"].extend(np.reshape(channels - transform, (self.n_samples, -1)))
@@ -214,7 +262,8 @@ class Gen():
         # generate the seasonalites
         seas = np.zeros_like(self.mu)
         for idx, channel in enumerate(channels):
-            seas[channel] = np.maximum(seas[channel], np.sin(2 * np.pi * self.t * freqs[idx] / (24 * 60 * 7) + phases[idx])* amps[idx])
+            index = idxs[idx]
+            seas[channel, index:] = np.maximum(seas[channel, index:], np.sin(2 * np.pi * self.t[index:] * freqs[idx] / (24 * 60 * 7) + phases[idx])* amps[idx])
         
          # add it to the channels
         self.mu += seas
