@@ -485,6 +485,7 @@ class FastGen():
         } 
 #         print(self.mu.shape, self.mu)
 #         print(self.cov.shape, self.cov)
+        self.add_std_variation(self.effects["std_variation"])
         self.x = np.random.multivariate_normal(self.mu, np.diag(self.cov).astype(np.float16), size=self.n).T
 #         print(self.x.shape)
         
@@ -577,13 +578,25 @@ class FastGen():
         occ = params["occurances"]  # number of Trends.   
         slope = params["max_slope"] # Max slope of the Trends  
         trend_type = params["type"] # linear or quadratic or mixed trends
+        trend_start = params["start"]
         
         # transformation array to map the effect on the corresponding channels in each sample
         transform = np.repeat(np.arange(0, self.n_samples * self.nchannels, step=self.nchannels), occ)
         
         ### create randomised Trends parameters
         channels = np.random.randint(self.nchannels, size=self.n_samples* occ) + transform # On which channel will the Trend be applied.
-        idxs = np.random.randint(self.n, size=self.n_samples* occ) # At which index will the Trend start.        
+        if trend_start == None:
+            idxs = np.random.randint(self.n, size=self.n_samples* occ) # At which index will the Trend start.
+        else:
+            if trend_start > self.n:
+                print("trend start index adjusted to 80% of time series (start + interval exceed time series range!)")
+                trend_start = self.n*0.8
+            if trend_start < 0:
+                print("trend start index adjusted to 0 (start is negative!)")
+                trend_start = 0
+            idxs = int(trend_start) * np.ones(self.n_samples* occ, dtype=np.int8)
+            
+#         idxs = np.random.randint(self.n, size=self.n_samples* occ) # At which index will the Trend start.        
         slopes = np.random.uniform(low = -slope, high = slope, size=self.n_samples* occ)  # Slope of the Trend.
         
         
@@ -647,13 +660,29 @@ class FastGen():
         occ = params["occurances"] # number of std variations.
         max_value = params["max_value"] # max values of std.
         interval = params["interval"] # length of the interval on which the std variates
+        std_var_start = params["start"] # where the std variation starts
         
         # transformation array to map the effect on the corresponding channels in each sample
         transform = np.repeat(np.arange(0, self.n_samples * self.nchannels, step=self.nchannels), occ)
         
         ### create randomised std variations parameters
-        channels = np.random.randint(self.nchannels, size=self.n_samples* occ) + transform #  # On which channel will the seasonality be applied.     
-        start_idxs = np.random.randint(self.n - interval, size=occ) # At which index will the std variation start.
+        channels = np.random.randint(self.nchannels, size=self.n_samples* occ) + transform #  # On which channel will the seasonality be applied.
+        if std_var_start == None and interval == None:
+            std_var_start = 0
+            interval = self.n
+        if std_var_start == None:
+            start_idxs = np.random.randint(self.n - interval, size=self.n_samples* occ) # At which index will the Pulse start.
+        else:
+            if std_var_start + interval > self.n:
+                print("std var start index adjusted to the max value (start + interval exceed time series range!)")
+                std_var_start = self.n - interval
+            if std_var_start < 0:
+                print("std var start index adjusted to 0 (start is negative!)")
+                std_var_start = 0
+            start_idxs = int(std_var_start) * np.ones(self.n_samples* occ, dtype=np.int8)
+        if interval == None:
+            interval = self.n - std_var_start
+#         start_idxs = np.random.randint(self.n - interval, size=occ) # At which index will the std variation start.
         end_idxs = start_idxs + np.random.randint(interval, size=occ) # At which index will the std variation end.
         intervals = end_idxs - start_idxs
         
@@ -670,10 +699,13 @@ class FastGen():
         # add it to the channels
         for i in range(self.n_samples* occ):
             ch = channels[i]
-            amplitude = np.random.uniform(high = max_value, size = (1, intervals[i]))
-            
-            self.cov[ch, ch, start_idxs[i]: end_idxs[i]] = amplitude
-            self.effects_params["Std_variation"]["amplitude"].extend(amplitude)
+#             amplitude = np.random.uniform(high = max_value, size = (1, intervals[i]))
+#             print(self.cov.shape)
+#             print(
+            amplitude = np.random.uniform(high = max_value)
+            self.cov[ch] = amplitude
+#             self.cov[ch, ch, start_idxs[i]: end_idxs[i]] = amplitude
+            self.effects_params["Std_variation"]["amplitude"].extend([amplitude])
             
     def add_channels_coupling(self, params):
         

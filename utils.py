@@ -32,20 +32,22 @@ def get_means_indices(label):
     first_indicies = ind_sorted[cum_sum]
     return first_indicies
 
-def generate_long_data(effects, n_samples=1, periode=365, step=5, val=500, n_channels=1, effect="Seasonality", occurance=1, L=2016, batch_size=50, split=(0.8, 0.9), return_gen=False):
+def generate_long_data(effects, n_samples=1, periode=365, step=5, val=500, n_channels=1, 
+                       effect="Seasonality", occurance=1, L=2016, batch_size=50, split=(0.8, 0.9), 
+                       return_gen=False, window=slidingWindow):
     effects = set_effect(effect, effects, occurance)
     
     X_long = Gen(n_samples, periode, step, val, n_channels, effects)
     x_long, params_long, e_params_long = X_long.parameters()
     X_long.show()
 
-    train_data_long, val_data_long, test_data_long = create_loader_Window(x_long.squeeze(0), batch_size=batch_size, L=L, split=split)
+    train_data_long, val_data_long, test_data_long = create_loader_Window(x_long.squeeze(0), window=window, batch_size=batch_size, L=L, split=split)
     if return_gen == False:
         return train_data_long, val_data_long, test_data_long
     else:
         return train_data_long, val_data_long, test_data_long, X_long
 
-def generate_labeled_data(effects, n_samples=500, periode=7, step=5, val=500, n_channels=1, effect="Seasonality", occurance=1, batch_size=10, split=(0.8, 0.9)):
+def generate_labeled_data(effects, n_samples=500, periode=7, step=5, val=500, n_channels=1, effect="Seasonality", occurance=1, batch_size=10, split=(0.8, 0.9), norm=True):
     effects = set_effect(effect, effects, occurance)
     
     X = FastGen(n_samples, periode, step, val, n_channels, effects)
@@ -60,7 +62,7 @@ def generate_labeled_data(effects, n_samples=500, periode=7, step=5, val=500, n_
     labels = extract_parameters(n_channels, e_params, effects, n_samples*10)
     labels = add_mu_std(labels, params)
 
-    train_data, val_data, test_data = create_loader_noWindow(x, labels, batch_size=batch_size, split=split)
+    train_data, val_data, test_data = create_loader_noWindow(x, labels, batch_size=batch_size, split=split, norm=norm)
     return train_data, val_data, test_data
 
 def normalize_signal(signal):
@@ -873,7 +875,7 @@ def no_effects(effects):
 def set_effect(effect, effects, n):
     
     occ = "occurances"
-    considered_effects = ["no_effect", "Pulse", "Trend", "Seasonality", "both", "all"]
+    considered_effects = ["no_effect", "std_variation", "Pulse", "Trend", "Seasonality", "both", "all"]
     no_effects(effects)
     
     if effect == "random":
@@ -1147,7 +1149,7 @@ def extract_param_per_effect(labels, e_params, effect_n, effect):
             # for each occurance of this effect loop through all the parameters of this effect 
             for param_type in e_params[effect]:
                 # skip the channel list
-                if param_type not in ["channel", "phaseshift", "index"]:
+                if param_type not in ["channel", "phaseshift", "index", "interval", "amplitude"]:
                     print("----------------------")
 
                     print("Parameter: ", param_type)
@@ -1165,6 +1167,9 @@ def extract_param_per_effect(labels, e_params, effect_n, effect):
                     if param_type == "index": val = get_index_from_date(val)
                     
                     print("Value:", val)
+                    if isinstance(val, np.str_):
+                        print("here")
+                        val = np.inf
 
                     #fill the labels tensor
                     labels[sample][channel][effect_n][next_idx] = val

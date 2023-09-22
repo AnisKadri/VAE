@@ -21,16 +21,19 @@ import utils
 
 
 class noWindow(Dataset):
-    def __init__(self, data, labels=None, L=None):
+    def __init__(self, data, labels=None, L=None, norm=True):
         self.data = data
         self.labels = labels
         self.n = data.shape[-1]
+        self.norm = norm
 
     def __getitem__(self, index):
         
-        x, label = self.data[index], None         
-        
-        norm = torch.sum(x / self.n, axis=(x.dim()-1), keepdim=True)
+        x, label = self.data[index], None 
+
+        if self.norm == True:
+            norm = torch.sum(x) / self.n#, axis=(x.dim()-1), keepdim=True)
+        else: norm = 1
 
         label = self.labels[index]
         idxs = utils.get_means_indices(label)
@@ -91,7 +94,7 @@ class stridedWindow(Dataset):
         #     return self.data.shape[0] - self.L
 
 
-def create_loader_noWindow(x, labels, L=2016, window=noWindow, batch_size=10, shuffle=True, split=(0.8, 0.9)):
+def create_loader_noWindow(x, labels, L=2016, window=noWindow, batch_size=10, shuffle=True, split=(0.8, 0.9), norm=True):
     x = torch.FloatTensor(x)
     n = x.shape[0]
     train_split, test_split = split
@@ -101,15 +104,15 @@ def create_loader_noWindow(x, labels, L=2016, window=noWindow, batch_size=10, sh
     test_  , test_labels  = x[int(test_split*n):]           , labels[int(test_split*n):]
 
 
-    train_data = DataLoader(window(train_, train_labels), # slidingWindow, stridedWindow
+    train_data = DataLoader(window(train_, train_labels, norm=norm), # slidingWindow, stridedWindow
                             batch_size= batch_size,# 59, # 22
                             shuffle = shuffle
                             )
-    val_data = DataLoader(window(val_, val_labels),
+    val_data = DataLoader(window(val_, val_labels, norm=norm),
                             batch_size=batch_size,
                             shuffle = shuffle
                             )
-    test_data = DataLoader(window(test_, test_labels),
+    test_data = DataLoader(window(test_, test_labels, norm=norm),
                             batch_size=batch_size,
                             shuffle = shuffle
                             )
