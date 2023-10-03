@@ -1,3 +1,3 @@
 import pytest
-
-def test_get_means_indices():
+@pytest.mark.parametrize(
+def test_generate_long_data():
