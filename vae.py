@@ -6,28 +6,21 @@ import torch.distributions
 
 
 class Variational_Autoencoder(nn.Module):
-    def __init__(self, n_channels, num_layers, latent_dims, v_encoder, v_decoder,
-                 L=30,
-                 slope=0.2,
-                 first_kernel=None,
-                 ß=0.25,
-                 modified=True,
-                 reduction=False,
-                 ):
+    def __init__(self, args, v_encoder, v_decoder):
         super(Variational_Autoencoder, self).__init__()
 
-        self._n_channels = n_channels
-        self._num_layers = num_layers
-        self._latent_dims = latent_dims
+        self._n_channels = args.n_channels
+        self._num_layers = args.num_layers
+        self._latent_dims = args.latent_dims
         self._v_encoder = v_encoder
         self._v_decoder = v_decoder
         #         self._v_quantizer = v_quantizer
-        self._L = L
-        self._slope = slope
-        self._first_kernel = first_kernel
-        self._ß = ß
-        self._reduction = reduction
-        self._modified = modified
+        self._L = args.L
+        self._slope = args.slope
+        self._first_kernel = args.first_kernel
+        self._ß = args.ß
+        self._reduction = args.reduction
+        self._modified = args.modified
         #         if self._modified:
         #             self._num_embed = self._n_channels * 4 * self._num_layers
         #         else:
@@ -35,10 +28,8 @@ class Variational_Autoencoder(nn.Module):
         #         if self._reduction:
         #             self._num_embed = self._num_embed // 2
 
-        self.encoder = self._v_encoder(self._n_channels, self._num_layers, self._latent_dims, self._L, self._slope,
-                                       self._first_kernel, self._modified, self._reduction)
-        self.decoder = self._v_decoder(self._n_channels, self._num_layers, self._latent_dims, self._L, self._slope,
-                                       self._first_kernel, self._modified, self._reduction)
+        self.encoder = self._v_encoder(args)
+        self.decoder = self._v_decoder(args)
 
     #         self.quantizer = self._v_quantizer(self._num_embed, self._latent_dims, self._commit_loss, decay=0.99,
     #                                            epsilon=1e-5)
@@ -91,18 +82,18 @@ class Variational_Autoencoder(nn.Module):
 # K is the number of vectors which is the number of features for each channels
 # Example: I have 3 Channels MTS and want for each channel 5 features then K = 5, D = 3
 class VQ_Quantizer(nn.Module):
-    def __init__(self, num_embed, dim_embed, commit_loss, decay, epsilon=1e-5):
+    def __init__(self, args, decay, epsilon=1e-5):
         super(VQ_Quantizer, self).__init__()
 
-        self._num_embed = num_embed
-        self._dim_embed = dim_embed
-        self._commit_loss = commit_loss
+        self._num_embed = args.num_embed
+        self._dim_embed = args.latent_dims
+        self._commit_loss = args.commit_loss
 
         self._embedding = nn.Embedding(self._num_embed, self._dim_embed)
         self._embedding.weight.data.uniform_(-1 / self._num_embed, 1 / self._num_embed)
 
-        self.register_buffer('_ema_cluster_size', torch.zeros(num_embed))
-        self._ema_w = nn.Parameter(torch.Tensor(num_embed, dim_embed))
+        self.register_buffer('_ema_cluster_size', torch.zeros(self._num_embed))
+        self._ema_w = nn.Parameter(torch.Tensor(self._num_embed, self._dim_embed))
         self._ema_w.data.normal_()
 
         self._decay = decay
@@ -134,7 +125,7 @@ class VQ_Quantizer(nn.Module):
         #         print(dist.shape)
 
         embed_indices = torch.argmin(dist, dim=1).unsqueeze(1)
-#                 print("embed indices",embed_indices)
+#         print("embed indices",embed_indices)
         if self.training:
             noise = torch.randn(embed_indices.shape) * self._std
             noise = torch.round(noise).to(torch.int32).to(embed_indices)
@@ -156,7 +147,7 @@ class VQ_Quantizer(nn.Module):
         quantizer = torch.matmul(embed_Matrix, self._embedding.weight)
         #         print("the quantizer", quantizer.shape, quantizer)
         quantizer = quantizer.view(x_shape).permute(0, 2, 1).contiguous()
-        #         print("the quantizer", quantizer.shape, quantizer)
+#         print("the quantizer", quantizer.shape, quantizer)
 
         # Use EMA to update the embedding vectors
         if self.training:
@@ -188,7 +179,7 @@ class VQ_Quantizer(nn.Module):
         # straigh-through gradient
         quantizer = x + (quantizer - x).detach()
         quantizer = quantizer.permute(0, 2, 1).contiguous()
-        #         print("quantizer ", quantizer.shape)
+#         print("quantizer ", quantizer.shape)
 
         return quantizer, loss, embed_indices
 
@@ -294,40 +285,32 @@ class VQ_Quantizer__spread(nn.Module):
         return quantizer, loss
 
 class VQ_MST_VAE(nn.Module):
-    def __init__(self, n_channels, num_layers, latent_dims, v_encoder, v_decoder, v_quantizer,
-                 L=30,
-                 slope=0.2,
-                 first_kernel=None,
-                 commit_loss=0.25,
-                 modified=True,
-                 reduction=False,
-                 ):
+    def __init__(self, args, v_encoder, v_decoder, v_quantizer):
         super(VQ_MST_VAE, self).__init__()
 
-        self._n_channels = n_channels
-        self._num_layers = num_layers
-        self._latent_dims = latent_dims
+        self._n_channels = args.n_channels
+        self._num_layers = args.num_layers
+        self._num_embed = args.num_embed
+        self._latent_dims = args.latent_dims
         self._v_encoder = v_encoder
         self._v_decoder = v_decoder
         self._v_quantizer = v_quantizer
-        self._L = L
-        self._slope = slope
-        self._first_kernel = first_kernel
-        self._commit_loss = commit_loss
-        self._reduction = reduction
-        self._modified = modified
-        if self._modified:
-            self._num_embed = self._n_channels * 4 * self._num_layers
-        else:
-            self._num_embed = self._n_channels * 2
-        if self._reduction:
-            self._num_embed = self._num_embed // 2
+        self._L = args.L
+        self._slope = args.slope
+        self._first_kernel = args.first_kernel
+        self._commit_loss = args.commit_loss
+        self._reduction = args.reduction
+        self._modified = args.modified
+        # if self._modified:
+        #     self._num_embed = self._n_channels * 4 * self._num_layers
+        # else:
+        #     self._num_embed = self._n_channels * 2
+        # if self._reduction:
+        #     self._num_embed = self._num_embed // 2
 
-        self.encoder = self._v_encoder(self._n_channels, self._num_layers, self._latent_dims, self._L, self._slope,
-                                       self._first_kernel, self._modified, self._reduction)
-        self.decoder = self._v_decoder(self._n_channels, self._num_layers, self._latent_dims, self._L, self._slope,
-                                       self._first_kernel, self._modified, self._reduction)
-        self.quantizer = self._v_quantizer(100, self._latent_dims, self._commit_loss, decay=0.99,
+        self.encoder = self._v_encoder(args)
+        self.decoder = self._v_decoder(args)
+        self.quantizer = self._v_quantizer(args, decay=0.99,
                                            epsilon=1e-5)
 
         self.bn = nn.BatchNorm1d(self._num_embed)
@@ -374,7 +357,7 @@ class VQ_MST_VAE(nn.Module):
 
 #         print("----------------Decoding-------------")
 #         print("----------------Decoder Output-------------")
-#         # print("mu and logvar Decoder", mu_dec.shape, logvar_dec.shape)
+#         print("mu and logvar Decoder", mu_dec.shape, logvar_dec.shape)
 #         print("rec shape", x_rec.shape)
         if split_loss == True:
             return x_rec, loss_rec, loss_quantize, mu, logvar, mu_rec, logvar_rec, e

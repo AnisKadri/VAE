@@ -9,11 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
-from Encoders import LongShort_TCVAE_Encoder#, RnnEncoder, MST_VAE_Encoder, MST_VAE_Encoder_dist
-from Decoders import LongShort_TCVAE_Decoder#, RnnDecoder, MST_VAE_Decoder, MST_VAE_Decoder_dist
-from vae import  Variational_Autoencoder, VQ_MST_VAE, VQ_Quantizer
-from utils import train_on_effect
-from train import slidingWindow, stridedWindow, train, criterion
+from VQ_EMA_fn import *
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.widgets import Cursor
 from copy import deepcopy
@@ -58,11 +54,11 @@ class VQ_gui(tk.Tk):
     # self.MI_scores = self.calculate_MI_score(self.mean)
 
     # create a DataLoader from mu and logvar for later generation
-    self.mu_loader = DataLoader(stridedWindow(self.mu, self.L, stride=0), #self.mu, #slidingWindow(self.mu, self.L),
+    self.mu_loader = DataLoader(slidingWindow(self.mu, self.L), #self.mu, #slidingWindow(self.mu, self.L),
                            batch_size=self.batch_size,
                            shuffle=False
                            )
-    self.logvar_loader = DataLoader(stridedWindow(self.logvar, self.L, stride=0), #self.logvar, #slidingWindow(self.logvar, self.L),
+    self.logvar_loader = DataLoader(slidingWindow(self.logvar, self.L), #self.logvar, #slidingWindow(self.logvar, self.L),
                                batch_size=self.batch_size,
                                shuffle=False
                                )
@@ -353,12 +349,10 @@ class VQ_gui(tk.Tk):
 
   def plot_reconstruction(self, ax_plot, x, x_rec, x_rec_mean):
     ax_plot.clear()
-    print(x.shape)
-    print(x_rec.shape)
-    ax_plot.plot(x, "b", alpha=0.2)
+    ax_plot.plot(x.T, "b", alpha=0.2)
 
-    ax_plot.plot(x_rec, "orange", alpha=0.2)
-    ax_plot.plot(x_rec_mean.T, "r")
+    ax_plot.plot(x_rec.T, "orange", alpha=0.2)
+    ax_plot.plot(x_rec_mean, "r")
     # Create custom legend handles and labels
     blue_handle = plt.Line2D([], [], color='b', label='Original Data')
     red_handle = plt.Line2D([], [], color='r', label='Reconstructions mean')
@@ -831,18 +825,18 @@ class VQ_gui(tk.Tk):
 if __name__ == "__main__":
   n_channels = 1
   latent_dims = 7
-  L = 4032
+  L = 60
   i = 2
-  effect = "seasonality" # trend, seasonality, std_variation, trend_seasonality, no_effect
+  effect = "no_effect" # trend, seasonality, std_variation, trend_seasonality, no_effect
 
 
   # x = torch.load(r'modules\data_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
   # params = torch.load(r'modules\params_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
   # v = torch.load(r'modules\vq_ema_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
 
-  x = torch.load(r'modules\vq_vae_strided_data_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
-  params = torch.load(r'modules\vq_vae_strided_params_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
-  v = torch.load(r'modules\vq_vae_strided_model_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
+  x = torch.load(r'modules\vq_vae_data_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
+  params = torch.load(r'modules\vq_vae_params_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
+  v = torch.load(r'modules\vq_vae_model_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
 
 
   print(x)
@@ -858,15 +852,15 @@ if __name__ == "__main__":
   train_ = x[:, :int(0.8 * n)]
   val_ = x[:, int(0.8 * n):int(0.9 * n)]
   test_ = x[:, int(0.9 * n):]
-  train_data = DataLoader(stridedWindow(train_, L, stride=0),
+  train_data = DataLoader(slidingWindow(train_, L),
                           batch_size=batch_size,
                           shuffle=False
                           )
-  val_data = DataLoader(stridedWindow(val_, L, stride=0),
+  val_data = DataLoader(slidingWindow(val_, L),
                         batch_size=batch_size,
                         shuffle=False
                         )
-  test_data = DataLoader(stridedWindow(test_, L, stride=0),
+  test_data = DataLoader(slidingWindow(test_, L),
                          batch_size=batch_size,
                          shuffle=False
                          )

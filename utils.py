@@ -12,16 +12,91 @@ from matplotlib.gridspec import GridSpec
 # from ipywidgets import interact
 # from IPython.display import display, clear_output
 import matplotlib.gridspec as gridspec
-from dataGen import Gen, FastGen
+from dataGen import Gen, FastGen, Gen2
 from train import *
 from torch.utils.data import Dataset, DataLoader
 from datetime import datetime
 import sys
 from functools import wraps
-from scipy.signal import butter#,filtfilt
+from scipy.signal import butter, filtfilt
 from scipy.fft import fft, fftfreq
-from torchaudio.functional import filtfilt
+# from torchaudio.functional import filtfilt
 import random
+import pprint
+from IPython import display
+
+
+
+
+class GENV:
+    def __init__(self, periode=2,
+                 step=5,
+                 val=500,
+                 n_channels=5,
+                 n_samples=2,
+                 samples_factor=10,
+                 bs=256,
+                 shuffle=True,
+                 L=288*2,
+                 device='cuda',
+                 latent_dims=20,
+                 num_layers=3,
+                 num_embed=100,
+                 slope=0.1,
+                 first_kernel=288,
+                 ß=0.25,
+                 commit_loss=1.5,
+                 epochs=100,
+                 learning_rate=1e4,
+                 beta1=0.5,
+                 beta2=0.9,
+                 split=(0.8, 0.9), 
+                 window=StridedWindow,
+                 no_window=NoWindow,
+                 modified=True,
+                 reduction=True,
+                 min_max=True
+                ):
+        
+        self.periode = periode                     # Length of time series in days.
+        self.step = step                           # Messing tackt in mins.
+        self.val = val                             # Max value when generating the time series.
+        self.n_channels = n_channels               # Number of channels in each time series.
+        self.n_samples = n_samples                 # Number of samples per generated time series.
+        self.samples_factor = samples_factor     # How many time series to generate.
+        self.bs = bs                               # Batch size.
+        self.shuffle = shuffle                     # Shuffle option in DataLoader.
+        self.L = L                                 # Window length (288 is one day of 5 mins tackt).
+        self.device = device                       # Which device the training is on.
+        self.latent_dims = latent_dims             # Size of Latent space.
+        self.num_layers = num_layers               # Num of hidden Layers in the encoder/decoder.
+        self.num_embed = num_embed                 # Num of codebook vectors in VQ.
+        self.slope = slope                         # Slope to use in LeakyRELU.
+        self.first_kernel = first_kernel           # Size of the first Kernel in the Long TC.
+        self.ß=ß                                   # Disentangelement factor in vae.
+        self.commit_loss = commit_loss             # Commitement Loss factor of VQ.
+        self.epochs = epochs                       # Number of epochs to train.
+        self.learning_rate = learning_rate         # Learning rate.
+        self.beta1 = beta1                         # Adam beta1 param.
+        self.beta2 = beta2                         # Adam beta2 param. 
+        self.split = split                         # How the data should be split in train/val/test.
+        self.window = window                       # Which Window to use.
+        self.no_window = no_window                 # To use for no window.
+        self.modified = modified                   # double the number of channels in each TC layer if True
+        self.reduction = reduction                 # merge the long and short enc outputs if True   
+        self.min_max = min_max                     # choose which normalization to use
+        self.enc_out = self.enc_output(            # number of channels at enc output
+            self.modified,   
+            self.reduction)
+        
+    def enc_output(self, mod, red):
+        if mod:
+            out = self.n_channels * 4 *self.num_layers
+        else:
+            out = self.n_channels * 2
+        if red:
+            out = out // 2
+        return out
 
 
 def get_means_indices(label):
@@ -32,37 +107,236 @@ def get_means_indices(label):
     first_indicies = ind_sorted[cum_sum]
     return first_indicies
 
-def generate_long_data(effects, n_samples=1, periode=365, step=5, val=500, n_channels=1, 
-                       effect="Seasonality", occurance=1, L=2016, batch_size=50, split=(0.8, 0.9), 
-                       return_gen=False, window=slidingWindow):
+def suppress_prints(func):
+    @wraps(func)
+    def wrapper(*arg, **kwargs):
+        # Store the original value of sys.stdout
+        original_stdout = sys.stdout
+
+        try:
+            # Replace sys.stdout with a dummy stream that discards output
+            dummy_stream = open("NUL", "w")  # Use "nul" on Windows
+            sys.stdout = dummy_stream
+            return func(*arg, **kwargs)
+        finally:
+            # Restore the original sys.stdout
+            sys.stdout = original_stdout
+
+    return wrapper
+
+def revert_min_max(data, norm):
+    dist, v_min = norm[0], norm[1]
+    x = data.permute(*torch.arange(data.ndim - 1, -1, -1))
+    original_val = (dist * x ) + v_min
+    original_val = original_val.permute(*torch.arange(original_val.ndim - 1, -1, -1))
+    return original_val
+
+def revert_min_max_s(data, norm):
+    dist, v_min = norm[0], norm[1]
+    dist = dist[:, np.newaxis, np.newaxis]
+    v_min = v_min[:, np.newaxis, np.newaxis]
+    
+    original_val = (dist * data ) + v_min
+    return original_val
+
+def revert_standarization(data, norm):    
+    std, mean = norm[2], norm[3]    
+    original_val = (std * data) + mean
+    return original_val
+
+def mute_norm(norm):
+    dist = torch.ones_like(norm[0])
+    v_min = torch.zeros_like(norm[1])
+    
+    std = torch.ones_like(norm[2])
+    mean = torch.zeros_like(norm[3])
+    return (dist, v_min, std, mean)
+
+def rebuild_TS(model, train_loader, args, keep_norm= False):    
+    device = args.device
+    model.to(device)
+    model.eval()
+    min_max = args.min_max
+    
+    for p in model.parameters():
+        p.requires_grad = False
+
+    data_shape = train_loader.dataset.data.shape 
+    e_indices = torch.empty(data_shape[0], args.enc_out, args.latent_dims)    
+    Origin = torch.empty(data_shape)
+    REC = torch.empty(data_shape)
+
+    idx = 0
+    for sample_idx, (data, label, norm) in enumerate(train_loader):
+        if keep_norm:
+            norm = mute_norm(norm)
+       
+        data = data.to(device) 
+        norm = [n.to(device) for n in norm]
+        bs   = data.shape[0]        
+        x_rec, loss, mu, logvar, mu_rec, logvar_rec, e, indices = model(data, ouput_indices=True)
+        
+        denorm_data = revert_min_max_s(data, norm) if min_max else revert_standarization(data, norm)
+        denorm_rec =  revert_min_max_s(x_rec, norm) if min_max else revert_standarization(x_rec, norm)
+            
+        e_indices[idx: (idx+bs)] = indices.view(bs, args.enc_out, -1)
+        Origin[idx: idx+bs] = denorm_data
+        REC[idx: idx+bs] = denorm_rec
+        idx += bs
+        
+    return Origin, REC, e_indices
+
+# @suppress_prints
+def rebuild_TS_non_overlapping(model, train_loader, args, keep_norm= False):
+    device = args.device
+    L = args.L
+    n_channels = args.n_channels
+    data_shape = train_loader.dataset.data.shape 
+    min_max = args.min_max
+    
+    model.to(device)
+    model.eval()
+    for p in model.parameters():
+        p.requires_grad = False
+        
+    e_indices = torch.empty(args.enc_out, 0).to(device)
+
+    Origin = torch.empty(n_channels, 0).to(device)
+    REC = torch.empty(n_channels, 0).to(device)
+
+    idx = 0
+    for sample_idx, (data, label, norm) in enumerate(train_loader):       
+        if keep_norm:
+            norm = mute_norm(norm)
+
+        data = data.to(device) 
+        norm = [n.to(device) for n in norm]
+        bs   = data.shape[0]
+        
+        x_rec, loss, mu, logvar, mu_rec, logvar_rec, e, indices = model(data, ouput_indices=True)
+        
+        denorm_data = revert_min_max(data, norm) if min_max else revert_standarization(data, norm)
+        denorm_rec =  revert_min_max(x_rec, norm) if min_max else revert_standarization(x_rec, norm)
+
+        Origin    = torch.cat(( Origin, denorm_data.permute(1,0,2).reshape(args.n_channels, -1) ), axis=1)
+        REC       = torch.cat(( REC, denorm_rec.permute(1,0,2).reshape(args.n_channels, -1)   ), axis=1)
+        e_indices = torch.cat(( e_indices, indices.view(args.enc_out, -1)     ), axis=1)
+        idx += bs
+
+    return Origin.T, REC.T, e_indices
+
+def step_by_step_plot(model, data_loader, args, x_lim=None):
+     
+    dataset = data_loader.dataset.data
+    dataset.shape
+    if x_lim == None:
+        x_lim = dataset.shape[-1]
+    
+    Origin_no_norm, REC_no_norm, indices = rebuild_TS_non_overlapping(model, data_loader, args, keep_norm=True)
+    Origin, REC, indices = rebuild_TS_non_overlapping(model, data_loader, args, keep_norm=False)
+    
+    plot_rec(dataset.T[:x_lim], dataset.T[:x_lim], title = "Generated Time Serie")
+    plot_rec(Origin_no_norm[:x_lim].cpu(), Origin_no_norm[:x_lim].cpu(), title="Normalized Time serie")
+    plot_rec(Origin[:x_lim].cpu(), dataset.T[:x_lim], title="Reverted Time serie to original stat vs Generated ")
+    
+def step_by_step_plot_NoWindow(model, data_loader, args, n=0):
+     
+    dataset = data_loader.dataset.data
+    
+    Origin_norm, REC_norm, indices = rebuild_TS(model, data_loader, args, keep_norm=True)
+    Origin, REC, indices = rebuild_TS(model, data_loader, args, keep_norm=False)
+    
+    plot_rec(dataset[n].T, dataset[n].T, title = "Generated Time Serie")
+    plot_rec(Origin_norm[n].T.cpu(), Origin_norm[n].T.cpu(), title="Normalized Time serie")
+    plot_rec(Origin[n].T.cpu(), dataset[n].T, title="Reverted Time serie to original stat vs Generated ")
+
+def plot_heatmap(ax_heatmap, codebook):
+    ax_heatmap.clear()
+    heatmap = ax_heatmap.imshow(codebook)
+    ax_heatmap.set_title('Codebook Heatmap')
+    ax_heatmap
+
+
+    return heatmap
+def create_heatmap(codebook):
+    fig, ax_heatmap = plt.subplots(figsize=(12, 6), dpi=100)
+    heatmap = plot_heatmap(ax_heatmap, codebook.T)
+
+    cbar = fig.colorbar(heatmap)
+    ax_heatmap.set_xlabel('Num of Embeddings')
+    ax_heatmap.set_ylabel('Latent Dimensions')
+    plt.show()
+    
+    return ax_heatmap
+
+def plot_rec(origin, rec, lines=None, title="Original vs Reconstruction"):
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(rec, "r--", alpha = 0.5)
+    ax.plot(origin, "b-", alpha=0.2)
+    ax.set_title(title)
+    ax.grid()
+    
+    plt.show()
+    
+def plot_indices(indices):
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(indices.T[:60, :6], alpha = 0.5)    
+    ax.grid()
+    
+    plt.show()
+    
+def generate_long_data(args, effects, periode_factor=182, effect="Seasonality", occurance=1, return_gen=False):
+    args.periode *= periode_factor
+    n_samples= args.n_samples
+    args.n_samples = 1
     effects = set_effect(effect, effects, occurance)
     
-    X_long = Gen(n_samples, periode, step, val, n_channels, effects)
+    X_long = Gen2(args=args, effects=effects, fast=False)
     x_long, params_long, e_params_long = X_long.parameters()
     X_long.show()
+    args.periode = args.periode // periode_factor
+    args.n_samples = n_samples
 
-    train_data_long, val_data_long, test_data_long = create_loader_Window(x_long.squeeze(0), window=window, batch_size=batch_size, L=L, split=split)
+    train_data_long, val_data_long, test_data_long = create_loader_Window(x_long.squeeze(0), args=args)
     if return_gen == False:
         return train_data_long, val_data_long, test_data_long
     else:
         return train_data_long, val_data_long, test_data_long, X_long
 
-def generate_labeled_data(effects, n_samples=500, periode=7, step=5, val=500, n_channels=1, effect="Seasonality", occurance=1, batch_size=10, split=(0.8, 0.9), norm=True):
+# def generate_labeled_data(effects, n_samples=500, periode=7, step=5, val=500, n_channels=1, effect="Seasonality", occurance=1, batch_size=10, split=(0.8, 0.9), norm=True):
+#     effects = set_effect(effect, effects, occurance)
+    
+#     X = FastGen(n_samples, periode, step, val, n_channels, effects)
+#     for i in range(9):
+#         print("generating: ", i)
+#         Y = FastGen(n_samples, periode, step, val, n_channels, effects)    
+#         X.merge(Y)
+
+#     x, params, e_params = X.parameters()
+#     X.show(10)
+
+#     labels = extract_parameters(n_channels, e_params, effects, n_samples*10)
+#     labels = add_mu_std(labels, params)
+
+#     train_data, val_data, test_data = create_loader_noWindow(x, labels, batch_size=batch_size, split=split, norm=norm)
+#     return train_data, val_data, test_data
+
+def generate_labeled_data(args, effects, effect="Seasonality", occurance=1, norm=True):
     effects = set_effect(effect, effects, occurance)
     
-    X = FastGen(n_samples, periode, step, val, n_channels, effects)
-    for i in range(9):
+    X = Gen2(args=args, effects=effects)
+    for i in range(1, args.samples_factor):
         print("generating: ", i)
-        Y = FastGen(n_samples, periode, step, val, n_channels, effects)    
+        Y = Gen2(args=args, effects=effects)    
         X.merge(Y)
 
     x, params, e_params = X.parameters()
     X.show(10)
 
-    labels = extract_parameters(n_channels, e_params, effects, n_samples*10)
+    labels = extract_parameters(args, e_params=e_params, effects=effects)
     labels = add_mu_std(labels, params)
 
-    train_data, val_data, test_data = create_loader_noWindow(x, labels, batch_size=batch_size, split=split, norm=norm)
+    train_data, val_data, test_data = create_loader_noWindow(x, args, labels, norm=norm)
     return train_data, val_data, test_data
 
 def normalize_signal(signal):
@@ -75,7 +349,7 @@ def normalize_signal(signal):
     
     return normalized_signal
 
-def perform_fft(normalized_signal, sampling_interval, n_best):
+def perform_fft(normalized_signal, sampling_interval):
     time_scaling = 1 / (24 * 60 * 60)
 
     # Perform the FFT
@@ -95,7 +369,7 @@ def get_n_dominant(fft_signal, freqs, n_best):
 def fft_freq(signal, sampling_interval, n_best):
     normalized_signal = normalize_signal(signal)
 #     normalized_signal = signal
-    fft_signal, freqs = perform_fft(normalized_signal, sampling_interval, n_best)
+    fft_signal, freqs = perform_fft(normalized_signal, sampling_interval)
     return fft_signal, freqs
 
 def plot_fft(normalized_signal, fft_signal, freqs):
@@ -124,9 +398,9 @@ def butter_lowpass_filter(data, cutoff, fs, order):
 #     print(normal_cutoff)
     # Get the filter coefficients 
     b, a = butter(order, normal_cutoff, btype='low', analog=False)
-    b = torch.FloatTensor(b)
-    a = torch.FloatTensor(a)
-    y = filtfilt(data, b, a)
+#     b = torch.FloatTensor(b)
+#     a = torch.FloatTensor(a)
+    y = filtfilt(b, a, data)
     return y
 
 def denoise(ts):
@@ -155,69 +429,54 @@ def denoise(ts):
 #     plt.grid(True)
 #     plt.show()
     
-    return y.to("cuda")
+    return y
 
 
-def suppress_prints(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        # Store the original value of sys.stdout
-        original_stdout = sys.stdout
 
-        try:
-            # Replace sys.stdout with a dummy stream that discards output
-            dummy_stream = open("NUL", "w")  # Use "nul" on Windows
-            sys.stdout = dummy_stream
-            return func(*args, **kwargs)
-        finally:
-            # Restore the original sys.stdout
-            sys.stdout = original_stdout
 
-    return wrapper
-
-def compare(dataset, model, VQ=True):
-    model.eval()
-    rec = []
-    x = []
-    with torch.no_grad():
-        for i, data in enumerate(dataset):
-            if VQ:
-                x_rec, loss, mu, logvar = model(data)
-            else:
-                x_rec, mu, logvar = model(data)
-            z = model.reparametrization_trick(mu, logvar)
-            x.extend(data[:,:,0].detach().numpy())
-            rec.extend(x_rec.detach().numpy())
-
-    plt.plot(rec, "r--")
-    plt.plot(x[:], "b-")
-    # plt.ylim(0,100)
-    plt.grid(True)
-    plt.show()
-    
-def compare_dist(dataset, encoder, decoder):
-    encoder.eval()
-    decoder.eval()
-    rec = []
-    x = []
-    with torch.no_grad():
-        for i, data in enumerate(dataset):
-             # Forward pass through the encoder and compute the latent variables
-            qnet = encoder(data)
-            
-            # Sample from the latent variables and forward pass through the decoder
-            z_sample = qnet['z'].rsample()
-            pnet = decoder(z_sample)
-            x_rec = pnet['x'].rsample()
+# def compare(dataset, model, VQ=True):
+#     model.eval()
+#     rec = []
+#     x = []
+#     with torch.no_grad():
+#         for i, data in enumerate(dataset):
+#             if VQ:
+#                 x_rec, loss, mu, logvar = model(data)
+#             else:
+#                 x_rec, mu, logvar = model(data)
 #             z = model.reparametrization_trick(mu, logvar)
-
-            x.extend(data[:,:,0].detach().numpy())
-            rec.extend(x_rec[:,:,0].detach().numpy())
-        
-    plt.plot(rec, "r--")
-    plt.plot(x[:], "b-")
-    plt.ylim(0,100)
-    plt.grid(True)
+#             x.extend(data[:,:,0].detach().numpy())
+#             rec.extend(x_rec.detach().numpy())
+#
+#     plt.plot(rec, "r--")
+#     plt.plot(x[:], "b-")
+#     # plt.ylim(0,100)
+#     plt.grid(True)
+#     plt.show()
+    
+# def compare_dist(dataset, encoder, decoder):
+#     encoder.eval()
+#     decoder.eval()
+#     rec = []
+#     x = []
+#     with torch.no_grad():
+#         for i, data in enumerate(dataset):
+#              # Forward pass through the encoder and compute the latent variables
+#             qnet = encoder(data)
+#
+#             # Sample from the latent variables and forward pass through the decoder
+#             z_sample = qnet['z'].rsample()
+#             pnet = decoder(z_sample)
+#             x_rec = pnet['x'].rsample()
+# #             z = model.reparametrization_trick(mu, logvar)
+#
+#             x.extend(data[:,:,0].detach().numpy())
+#             rec.extend(x_rec[:,:,0].detach().numpy())
+#
+#     plt.plot(rec, "r--")
+#     plt.plot(x[:], "b-")
+#     plt.ylim(0,100)
+#     plt.grid(True)
 
 
 # In[ ]:
@@ -899,117 +1158,15 @@ def set_effect(effect, effects, n):
     else:
         effects[effect][occ] = n
     return effects
-# def set_effect(effect):
-#     if effect == "no_effect":
-#         effects = {
-#             "Pulse": {
-#                 "occurances": 0,
-#                 "max_amplitude": 1.5,
-#                 "interval": 40
-#             },
-#             "Trend": {
-#                 "occurances": 0,
-#                 "max_slope": 0.005,
-#                 "type": "linear"
-#             },
-#             "Seasonality": {
-#                 "occurances": 0,
-#                 "frequency_per_week": (7, 14),  # min and max occurances per week
-#                 "amplitude_range": (5, 20),
-#             },
-#             "std_variation": {
-#                 "occurances": 0,
-#                 "max_value": 10,
-#                 "interval": 1000,
-#             },
-#             "channels_coupling": {
-#                 "occurances": 0,
-#                 "coupling_strengh": 20
-#             },
-#             "Noise": {
-#                 "occurances": 0,
-#                 "max_slope": 0.005,
-#                 "type": "linear"
-#             }
-#         }
-#     elif effect == "trend":
-#         effects = {
-#             "Pulse": {
-#                 "occurances": 0,
-#                 "max_amplitude": 1.5,
-#                 "interval": 40
-#             },
-#             "Trend": {
-#                 "occurances": 1,
-#                 "max_slope": 0.005,
-#                 "type": "linear"
-#             },
-#             "Seasonality": {
-#                 "occurances": 0,
-#                 "frequency_per_week": (7, 14),  # min and max occurances per week
-#                 "amplitude_range": (5, 20),
-#             },
-#             "std_variation": {
-#                 "occurances": 0,
-#                 "max_value": 10,
-#                 "interval": 1000,
-#             },
-#             "channels_coupling": {
-#                 "occurances": 0,
-#                 "coupling_strengh": 20
-#             },
-#             "Noise": {
-#                 "occurances": 0,
-#                 "max_slope": 0.005,
-#                 "type": "linear"
-#             }
-#         }
-#     elif effect == "seasonality":
-#         effects = {
-#             "Pulse": {
-#                 "occurances": 0,
-#                 "max_amplitude": 1.5,
-#                 "interval": 40
-#             },
-#             "Trend": {
-#                 "occurances": 0,
-#                 "max_slope": 0.005,
-#                 "type": "linear"
-#             },
-#             "Seasonality": {
-#                 "occurances": 1,
-#                 "frequency_per_week": (7, 14),  # min and max occurances per week
-#                 "amplitude_range": (5, 20),
-#             },
-#             "std_variation": {
-#                 "occurances": 0,
-#                 "max_value": 10,
-#                 "interval": 1000,
-#             },
-#             "channels_coupling": {
-#                 "occurances": 0,
-#                 "coupling_strengh": 20
-#             },
-#             "Noise": {
-#                 "occurances": 0,
-#                 "max_slope": 0.005,
-#                 "type": "linear"
-#             }
-#         }
 
-#     return effects
-def generate_data(n_channels, effect, L, periode=365, step=5, val=500 ):
-    effects = set_effect(effect)
-    X = Gen(periode, step, val, n_channels, effects)
+def generate_data(args, effects, effect="both", occurance=1):
+    effects = set_effect(effect, effects, occurance)
+    X = Gen(args, effects)
     x, params, e_params = X.parameters()
-    # pprint.pprint(params)
-    # pprint.pprint(e_params)
-    # X.show()
-    x = torch.FloatTensor(x)
 
-    # x = F.normalize(x, p=2, dim=1)
+    train_data_long, val_data_long, test_data_long = create_loader_Window(x_long.squeeze(0), args=args)
+
     n = x.shape[1]
-    # L = 30
 
     train_ = x[:, :int(0.8*n)]
     val_   = x[:, int(0.8*n):int(0.9*n)]
@@ -1030,15 +1187,16 @@ def generate_data(n_channels, effect, L, periode=365, step=5, val=500 ):
     return X, train_data, test_data, effects
 
 
-def train_on_effect(model, opt, device, n_channels=1, effect='no_effect', n_samples=10, epochs_per_sample=50):
-    L = model._L
-    latent_dims = model._latent_dims
-    for i in range(n_samples):
-        X, train_data, test_data = generate_data(n_channels, effect, L)
+def train_on_effect(model, opt, args, effects, effect='no_effect', epochs_per_sample=50):
+    L = args.L
+    latent_dims = args.latent_dims
+    n_channels = args.n_channels
+    for i in range(args.n_samples):
+        X, train_data, val_data, test_data = generate_long_data(args, effects, periode_factor=1, effect=effect)
         x, params, e_params = X.parameters()
 
         for epoch in range(1, epochs_per_sample):
-            train(model, train_data, criterion, opt, device, epoch, VQ=True)
+            train(model, train_data, criterion, opt, args.device, epoch, VQ=True)
         save(x, "data", effect, n_channels, latent_dims, L, i)
         save(params, "params", effect, n_channels, latent_dims, L, i)
         save(e_params, "e_params", effect, n_channels, latent_dims, L, i)
@@ -1069,8 +1227,9 @@ def train_on_effect_and_parameters(model, id_model, opt, id_opt, device, n_chann
 #         save(model, "model", effect, n_channels, latent_dims, L, i)
     return model, X, train_data
 
-def save(obj, name, effect, n_channels, latent_dims, L, i):
-    torch.save(obj, r'modules\vq_vae_{}_{}_{}channels_{}latent_{}window_{}.pt'.format(name, effect, n_channels, latent_dims, L, i))
+def save(obj, name, effect, args, i):
+    torch.save(obj, r'modules\vq_vae_{}_{}_{}channels_{}latent_{}window_{}.pt'.format(name, effect, args.n_channels,
+                                                                                      args.latent_dims, args.L, i))
 
 
 def get_average_norm_scale(train_data, model):
@@ -1108,14 +1267,14 @@ def get_latent_variables(train_data, model):
     return latents, avg_latents
 
 
-def get_index_from_date(date, ref_time = '2023-03-01T00:00:00', step = 5):  
+def get_index_from_date(date, ref_time='2023-03-01T00:00:00', step=5):
     
     # Convert the Ref time and the given date to a datetime variable
     reference_time = np.datetime64(ref_time)
     reference_time = datetime.strptime(reference_time.astype(str), "%Y-%m-%dT%H:%M:%S")
     date = datetime.strptime(date, "%Y-%m-%dT%H:%M:%S")
     
-    # Calculate the diff between the input date and the Ref Time, convert to minutes and get the index using the step
+    # Calculate the diff between the input date and the Ref Time, convert to minutes and get the index using the step.
     # step is the number of minutes between each sample
     index = int((date - reference_time).total_seconds() // (60 * step)) 
     
@@ -1164,7 +1323,7 @@ def extract_param_per_effect(labels, e_params, effect_n, effect):
                     val = e_params[effect][param_type][sample][i]                  
 
                     # if the parameter is the index where it happens (date string) transform it to a an int
-                    if param_type == "index": val = get_index_from_date(val)
+#                     if param_type == "index": val = get_index_from_date(val)
                     
                     print("Value:", val)
                     if isinstance(val, np.str_):
@@ -1196,10 +1355,12 @@ def squeeze_labels(labels):
     new_labels = torch.tensor(new_labels)
     return new_labels
 
-def extract_parameters(n_channels, e_params, effects, n_samples= None):
+def extract_parameters(args, e_params, effects):
     # create the labels tensor
     n_effects = len(effects)
     max_occ = get_max_occ(effects)
+    n_channels = args.n_channels
+    n_samples = args.n_samples * args.samples_factor
     if n_samples==None:
         labels = torch.zeros((n_channels, n_effects, 4 * max_occ))
     else:
@@ -1236,30 +1397,18 @@ def reshape_params(parameter):
 def add_mu_std(labels, params): 
     mu = torch.FloatTensor(params["mu"]).mean(dim=2)
     mu = reshape_params(mu)
-    print(mu.shape)
-    print(mu)
 
     std = torch.FloatTensor(params["cov"]).mean(dim=2)
     std = reshape_params(std)
 
-#     mu = torch.stack([torch.arange(len(mu)), mu], dim=2)
-#     std = torch.stack([torch.arange(len(std)), std], dim=1)
     mu_std = torch.cat((mu, std), dim=0).view(-1,3)
     labels = torch.cat((mu_std, labels), dim=0)
 
-#     sorted_indices = torch.argsort(labels[:, :2], dim=0, stable=True)
-#     labels = labels[sorted_indices]
-#     print(labels[:, 1])
-#     print(labels[:, 1].sort(stable=True))
-#     print(labels[:, 1].sort(stable=True)[1])
     labels = labels[labels[:, 1].sort(stable=True)[1]]
     labels = labels[labels[:, 0].sort(stable=True)[1]]
     n_samples = len(labels[:,0].unique())
+
     labels = torch.tensor_split(labels, n_samples, dim=0)
-#     for (i, label) in enumerate(labels):
-        
-#         print(i, label.shape)
     labels = torch.stack(labels)[..., 1:]
-#     labels = labels[:, None, :]
     
     return labels
