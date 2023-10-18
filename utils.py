@@ -24,6 +24,8 @@ from scipy.fft import fft, fftfreq
 import random
 import pprint
 from IPython import display
+import scipy.fft as sf
+
 
 
 
@@ -38,7 +40,7 @@ class GENV:
                  bs=256,
                  shuffle=True,
                  L=288*2,
-                 device='cuda',
+                 device='cuda' if torch.cuda.is_available() else 'cpu',
                  latent_dims=20,
                  num_layers=3,
                  num_embed=100,
@@ -106,6 +108,19 @@ def get_means_indices(label):
     cum_sum = torch.cat((torch.tensor([0]), cum_sum[:-1]))
     first_indicies = ind_sorted[cum_sum]
     return first_indicies
+
+def filter_close_values(input_list, threshold):
+    if len(input_list) <= 1:
+        return input_list  # Nothing to filter if the list has 0 or 1 element
+
+    input_list.sort()  # Sort the list in ascending order
+    filtered_list = [input_list[0]]
+
+    for value in input_list[1:]:
+        if abs(value - filtered_list[-1]) > threshold and (abs(value % filtered_list) > threshold).all():
+            filtered_list.append(value)
+
+    return filtered_list
 
 def suppress_prints(func):
     @wraps(func)
@@ -430,6 +445,34 @@ def denoise(ts):
 #     plt.show()
     
     return y
+
+def denoise_data(data):
+    denoised = np.empty_like(data)
+    for i, d in enumerate(data):
+        denoised[i] = denoise(d.unsqueeze(0).cpu())
+    return denoised
+
+def get_frequencies_per_week(v, train_data, args, n):
+    
+    Origin_norm, REC_norm, _ = rebuild_TS_non_overlapping(v, train_data, args, keep_norm=True)
+    denoised = denoise_data(Origin_norm.T.cpu())
+
+    N=len(denoised[0])
+    freqs_w = []
+    i = 0
+    while len(freqs_w) < n:
+        i += 1
+        X = sf.rfft(denoised[0]) #/ N
+        freqs = sf.rfftfreq(n=N, d=1/(24*12*7))
+
+        max_freq_ind = np.argpartition(np.abs(X), -i)[-i:]
+        freqs_w = filter_close_values(freqs[max_freq_ind], 0.2)
+
+#     print(freqs_w)
+#     print([fs % 14 for fs in freqs_w])
+    results = [fs % 14 for fs in freqs_w]
+
+    return results
 
 
 

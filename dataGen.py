@@ -53,8 +53,8 @@ class Gen2():
 
         # generate the time axis
         min_per_day = 1440
-        self.periode = args.periode * min_per_day  # convert in minutes
-        self.t = np.arange(self.periode, step=self.step)  # time axis
+        self.periode = args.periode * min_per_day // self.step # convert in minutes
+        self.t = np.arange(self.periode)  # time axis
         self.n = self.t.shape[0]  # number of points in time axis
         self.reference_time = np.datetime64('2023-03-01T00:00:00')  # Reference time (for plausibility and plots)
 
@@ -228,7 +228,7 @@ class Gen2():
         for idx, channel in enumerate(channels):
             index = start_idxs[idx]
             seas[channel, index:] = np.maximum(seas[channel, index:], np.sin(
-                2 * np.pi * self.t[index:] * freqs[idx] / (24 * 60 * 7) + phases[idx]) * amps[idx])
+                2 * np.pi * self.t[index:] * freqs[idx] / (24 * 12 * 7) + phases[idx]) * amps[idx])
 
         # add it to the channels
         if self.fast:
@@ -347,7 +347,7 @@ class Gen2():
 
     def plot_time_series(self, title, n_samples):
 
-        date_array = self.reference_time + np.array(self.t, dtype='timedelta64[m]')
+        date_array = self.reference_time + np.array(self.t * self.step, dtype='timedelta64[m]')
 
         combined_channel_samples = self.x.shape[0] * self.nchannels
         x_reshaped = np.reshape(self.x, (combined_channel_samples, -1)).T
