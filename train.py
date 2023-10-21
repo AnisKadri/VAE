@@ -43,9 +43,9 @@ class NoWindow(Dataset):
         
         x_norm, v_min, dist = self.min_max_norm(x)
         x_std, mean, std = self.standarization(x)
-        x = x_norm if self.min_max else x_std
+#         x = x_norm if self.min_max else x_std
 #         x = x / norm
-        return x, label, (dist, v_min, std, mean)
+        return (x_norm, x_std), label, (dist, v_min, std, mean)
 
     def __len__(self):
         return self.data.shape[0]
@@ -101,10 +101,10 @@ class StridedWindow(Dataset):
 #             print(x.shape)
             x_norm = self.min_max_norm(x)
             x_std, mean, std = self.standarization(x)
-            x = x_norm if self.min_max else x_std
+#             x = x_norm if self.min_max else x_std
 
 #             print(mean, std)
-            return x, "", (self.dist, self.v_min, std, mean)
+            return (x_norm, x_std), "", (self.dist, self.v_min, std, mean)
 
     def __len__(self):
         return (self.data.shape[-1] // self.L)
@@ -177,6 +177,13 @@ def create_loader_Window(x, args):
                            )
     return train_data, val_data, test_data
 
+def pick_data(data_tup, args):
+    if args.min_max:
+        data = data_tup[0].to(args.device)
+    else:
+        data = data_tup[1].to(args.device)
+    return data
+
 
 # In[3]:
 def criterion(recon_x, x, mu, logvar):
@@ -216,15 +223,16 @@ def sample_mean(model, batch, n):
     return REC, mu, logvar
 
 
-def train(model, train_loader, criterion, optimizer, device, epoch):
+def train(model, train_loader, args, optimizer, epoch):
+    device = args.device
     model.train()
     for p in model.parameters():
         p.requires_grad = True
     train_loss = 0
 
-    for batch_idx, (data, labels, norm) in enumerate(train_loader):
-
-        data = data.to(device)
+    for batch_idx, (data_tup, labels, norm) in enumerate(train_loader):
+        
+        data = pick_data(data_tup, args)
         norm = [n.to(device) for n in norm]
         optimizer.zero_grad()
 
@@ -263,10 +271,10 @@ def tune(model, train_loader, criterion, optimizer, device, epoch):
     x = torch.empty(n_channels, 0, device=device)
     quantizer_output = torch.empty(0, num_embed, latent_dims, device=device)
 
-    for batch_idx, (data, _, v) in enumerate(train_loader):
+    for batch_idx, (data_tup, _, norm) in enumerate(train_loader):
 
-        data = data.to(device)
-        v = v.to(device)
+        data = pick_data(data_tup, args)
+        norm = [n.to(device) for n in norm]
         optimizer.zero_grad()
 
         x_rec, loss, mu, logvar, mu_rec, logvar_rec, e = model(data)
@@ -282,6 +290,9 @@ def tune(model, train_loader, criterion, optimizer, device, epoch):
     print('====> Epoch: {} Average loss: {:.4f}'.format(epoch, train_loss / len(train_loader.dataset)))
 
     return loss
+
+
+
 
 def train_sgvb_loss(qnet, pnet, metrics_dict, prefix='pretrain_', name=None):
     with torch.autograd.profiler.record_function(name if name else 'pre_sgvb_loss'):

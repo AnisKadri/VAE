@@ -40,8 +40,22 @@ class Variational_Autoencoder(nn.Module):
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
+    
+    def calc_iqr(self, data):
+        q1 = data.quantile(0.25,0)
+        q3 = data.quantile(0.75,0)
+    #     print((q3-q1).shape)
+        return q3-q1
+    
+    def criterion(self, x, x_rec, c=0.001, lamda = 0.1):
+        iqr_x = lamda * self.calc_iqr(x)
+        iqr_x_rec = lamda * self.calc_iqr(x_rec)
 
-    def forward(self, x):
+        main_term = ((iqr_x -iqr_x_rec)/c )**2
+        loss = 2 * ( main_term/(4 + main_term) )
+        return loss.mean()
+
+    def forward(self, x, split_loss=False, ouput_indices=False, robust=True):
         mu, logvar = self.encoder(x)
         loss_kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
@@ -63,8 +77,10 @@ class Variational_Autoencoder(nn.Module):
         #         mu_dec, logvar_dec = self.decoder(e)
         #         x_rec = self.reparametrization_trick(mu_dec, mu_dec)
         x_rec, mu_rec, logvar_rec = self.decoder(z)
-
-        loss_rec = F.mse_loss(x_rec, x, reduction='sum')
+        if robust:
+            loss_rec = self.criterion(x, x_rec)
+        else:
+            loss_rec = F.mse_loss(x_rec, x, reduction='sum')
         loss = loss_rec + self._ß * loss_kld
 
         # print("----------------Decoding-------------")
@@ -75,7 +91,10 @@ class Variational_Autoencoder(nn.Module):
 #         print("loss_rec", loss_rec.shape)
 #         print("loss_kld", loss_kld.shape)
 #         print("loss", loss.shape)
-        return x_rec, loss, mu, logvar, mu_rec, logvar_rec, z
+        if ouput_indices:
+            return x_rec, loss, mu, logvar, mu_rec, logvar_rec, z, z
+        else:
+            return x_rec, loss, mu, logvar, mu_rec, logvar_rec, z
     
 # CodeBook Dim: K x D
 # D is the number of Channels
@@ -329,8 +348,22 @@ class VQ_MST_VAE(nn.Module):
         λ = torch.norm(perceptual_loss_grads) / (torch.norm(gan_loss_grads) + 1e-4)
         λ = torch.clamp(λ, 0, 1e2).detach()
         return 0.8 * λ
+    
+    def calc_iqr(self, data):
+        q1 = data.quantile(0.25,0)
+        q3 = data.quantile(0.75,0)
+    #     print((q3-q1).shape)
+        return q3-q1
+    
+    def criterion(self, x, x_rec, c=0.00000001, lamda = 0.1):
+        iqr_x = lamda * self.calc_iqr(x)
+        iqr_x_rec = lamda * self.calc_iqr(x_rec)
 
-    def forward(self, x, split_loss=False, ouput_indices=False):
+        main_term = ((iqr_x -iqr_x_rec)/c )**2
+        loss = 2 * ( main_term/(4 + main_term) )
+        return loss.mean()
+
+    def forward(self, x, split_loss=False, ouput_indices=False, robust=True):
         mu, logvar = self.encoder(x)
 
         z = self.reparametrization_trick(mu, logvar)
@@ -352,7 +385,10 @@ class VQ_MST_VAE(nn.Module):
         #         mu_dec, logvar_dec = self.decoder(e)
         #         x_rec = self.reparametrization_trick(mu_dec, mu_dec)
         x_rec, mu_rec, logvar_rec = self.decoder(e)
-        loss_rec = F.mse_loss(x_rec-1, x-1, reduction='sum')
+        if robust:
+            loss_rec = self.criterion(x, x_rec)
+        else:
+            loss_rec = F.mse_loss(x_rec, x, reduction='sum')
         loss = loss_rec + loss_quantize
 
 #         print("----------------Decoding-------------")

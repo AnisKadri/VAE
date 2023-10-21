@@ -136,10 +136,50 @@ class Gen2():
         ### create randomised Pulses parameters
         channels = np.random.randint(self.nchannels,
                                      size=n_occ) + transform  # On which channel will the effect be applied.
+        print(pulse_start)
         interval = self.check_interval_length(interval)  # Length of the generated Pulse
         start_idxs = self.set_start_idxs(pulse_start, occ, interval)  # At which index will the Pulse end.
         end_idxs = start_idxs + np.random.randint(low=1, high=interval,
                                                   size=n_occ)  # At which index will the Pulse end.
+        amplitude = np.random.uniform(low=-amp, high=amp, size=n_occ)  # How strong is the Pulse.
+
+        # save the Pulses parameters
+        self.save_generated_effect("Pulse", [channels - transform, start_idxs, amplitude])
+
+        # generate the pulses
+        # original value at the pulse indexes
+        print(start_idxs.shape)
+        print(self.x.shape)
+        print(self.mu.shape)
+        print(self.x.shape)
+        print(channels.shape)
+        ground_val = self.x[channels, start_idxs].astype(np.int8) if self.fast else self.mu[channels, start_idxs].astype(np.int8)  
+        
+        amp_sign = 0.01 * np.sign(amp)
+        k = np.random.uniform(ground_val + amp_sign, ground_val * amplitude)  # new values
+
+        # add it to the channels
+        for i in range(n_occ):
+            if self.fast:
+                self.x[channels[i], start_idxs[i]: end_idxs[i]] += k[i].astype(np.float16)
+            else:
+                self.mu[channels[i], start_idxs[i]: end_idxs[i]] += k[i].astype(np.float16)
+                
+    def add_random_pulse(self, percentage, amp):
+        # Merge samples and channels
+        if self.fast:
+            self.x = np.reshape(self.x, (self.n_samples * self.nchannels, -1))
+
+        # extract parameters:        
+        occ, start_idxs, end_idxs = self.set_random_start(percentage)
+        n_occ = self.n_samples * occ
+
+        # transformation array to map the effect on the corresponding channels in each sample
+        transform = np.repeat(np.arange(0, self.n_samples * self.nchannels, step=self.nchannels), occ)
+
+        ### create randomised Pulses parameters
+        channels = np.random.randint(self.nchannels,
+                                     size=n_occ) + transform  # On which channel will the effect be applied.
         amplitude = np.random.uniform(low=-amp, high=amp, size=n_occ)  # How strong is the Pulse.
 
         # save the Pulses parameters
@@ -158,6 +198,8 @@ class Gen2():
                 self.x[channels[i], start_idxs[i]: end_idxs[i]] += k[i].astype(np.float16)
             else:
                 self.mu[channels[i], start_idxs[i]: end_idxs[i]] += k[i].astype(np.float16)
+        if self.fast:
+            self.x = np.reshape(self.x, (self.n_samples, self.nchannels, -1))
 
     def add_trend(self, params):
 
@@ -407,6 +449,48 @@ class Gen2():
             
         start_idxs = np.array( start * max_length, dtype=np.int32)        
         return start_idxs
+    
+    def set_random_start(self, percentage):
+        # Define the desired percentage (x)
+
+        # Calculate the total number of indices you want
+        total_indices = int(percentage * self.n)  # Adjust 1000 based on your total number of points
+
+        # Define the minimum and maximum group size
+        min_group_size = 1
+        max_group_size = 5
+        mean_group_size = (max_group_size + min_group_size)//2
+        max_length = self.n - max_group_size
+
+        # Calculate the number of groups based on the total indices and the maximum group size
+        num_groups = int(total_indices / mean_group_size)
+
+        # Generate random group sizes between min and max
+        group_sizes = np.random.randint(min_group_size, max_group_size + 1, num_groups)
+
+        # Ensure the total number of indices is within the desired range
+        while sum(group_sizes) != total_indices:
+            diff = total_indices - sum(group_sizes)
+            grp_choice = np.random.choice(num_groups)
+            if diff > 0:                
+                diff_to_add = max_group_size - group_sizes[grp_choice]
+                group_sizes[grp_choice] += diff_to_add
+            else:
+                diff_to_add = group_sizes[grp_choice] - min_group_size
+                group_sizes[grp_choice] -= diff_to_add
+                
+        
+        n_occ = self.n_samples * num_groups
+        start = np.random.uniform(size=n_occ)
+        start_idxs = np.array( start * max_length, dtype=np.int32)
+        print(start_idxs.shape)
+        
+        group_sizes = np.tile(group_sizes, self.n_samples)
+        end_idxs = start_idxs + group_sizes
+            
+        return num_groups, start_idxs, end_idxs
+        
+        
 
     def check_interval_length(self, interval, treshold=1):
         if treshold == 0:
@@ -426,6 +510,7 @@ class Gen2():
 
         self.x = np.concatenate((self.x, y), axis=0)
         self.params["n_samples"] += params_y["n_samples"]
+        self.n_samples += params_y["n_samples"]
         self.params["mu"] = np.concatenate((self.params["mu"], params_y["mu"]), axis=0)
         self.params["cov"] = np.concatenate((self.params["cov"], params_y["cov"]), axis=0)
 
