@@ -235,6 +235,7 @@ def train(model, train_loader, args, optimizer, epoch):
         data = pick_data(data_tup, args)
         norm = [n.to(device) for n in norm]
         optimizer.zero_grad()
+        
 
         x_rec, loss, mu, logvar, mu_rec, logvar_rec, e = model(data)
 
@@ -247,7 +248,7 @@ def train(model, train_loader, args, optimizer, epoch):
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\t True Loss: {:.6f}'.format(
                 epoch, batch_idx, len(train_loader),
                 100. * batch_idx / len(train_loader), loss.item() / len(data), loss.item()))
-    print('====> Epoch: {} Average loss: {:.4f}'.format(epoch, train_loss / len(train_loader.dataset)))
+#     print('====> Epoch: {} Average loss: {:.4f}'.format(epoch, train_loss / len(train_loader.dataset)))
 
     return train_loss / len(train_loader.dataset)
 

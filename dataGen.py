@@ -457,8 +457,8 @@ class Gen2():
         total_indices = int(percentage * self.n)  # Adjust 1000 based on your total number of points
 
         # Define the minimum and maximum group size
-        min_group_size = 1
-        max_group_size = 5
+        min_group_size = 3
+        max_group_size = 6
         mean_group_size = (max_group_size + min_group_size)//2
         max_length = self.n - max_group_size
 

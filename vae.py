@@ -21,6 +21,7 @@ class Variational_Autoencoder(nn.Module):
         self._ß = args.ß
         self._reduction = args.reduction
         self._modified = args.modified
+        self._robust = args.robust
         #         if self._modified:
         #             self._num_embed = self._n_channels * 4 * self._num_layers
         #         else:
@@ -42,20 +43,24 @@ class Variational_Autoencoder(nn.Module):
         return mu + eps * std
     
     def calc_iqr(self, data):
-        q1 = data.quantile(0.25,0)
-        q3 = data.quantile(0.75,0)
-    #     print((q3-q1).shape)
+#         print(data.shape)
+        q1 = data.quantile(0.25,-1)
+        q3 = data.quantile(0.75,-1)
+#         print((q3-q1).shape)
         return q3-q1
     
-    def criterion(self, x, x_rec, c=0.001, lamda = 0.1):
-        iqr_x = lamda * self.calc_iqr(x)
-        iqr_x_rec = lamda * self.calc_iqr(x_rec)
+    def criterion(self, x_rec, x, c=0.05, lamda = 0.1):
+#         iqr_x = lamda * self.calc_iqr(x)
+#         iqr_x_rec = lamda * self.calc_iqr(x_rec)
+        
+        iqr_x = lamda * self.calc_iqr(abs(x-x_rec))
+#         print(iqr_x)
 
-        main_term = ((iqr_x -iqr_x_rec)/c )**2
+        main_term = (iqr_x/c )**2
         loss = 2 * ( main_term/(4 + main_term) )
-        return loss.mean()
+        return loss.sum()
 
-    def forward(self, x, split_loss=False, ouput_indices=False, robust=True):
+    def forward(self, x, split_loss=False, ouput_indices=False):
         mu, logvar = self.encoder(x)
         loss_kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
@@ -77,10 +82,11 @@ class Variational_Autoencoder(nn.Module):
         #         mu_dec, logvar_dec = self.decoder(e)
         #         x_rec = self.reparametrization_trick(mu_dec, mu_dec)
         x_rec, mu_rec, logvar_rec = self.decoder(z)
-        if robust:
-            loss_rec = self.criterion(x, x_rec)
+        if self._robust:
+            loss_rec = self.criterion(x_rec, x)
         else:
             loss_rec = F.mse_loss(x_rec, x, reduction='sum')
+        
         loss = loss_rec + self._ß * loss_kld
 
         # print("----------------Decoding-------------")
@@ -144,7 +150,7 @@ class VQ_Quantizer(nn.Module):
         #         print(dist.shape)
 
         embed_indices = torch.argmin(dist, dim=1).unsqueeze(1)
-#         print("embed indices",embed_indices)
+#         print("embed indices",embed_indices.shape)
         if self.training:
             noise = torch.randn(embed_indices.shape) * self._std
             noise = torch.round(noise).to(torch.int32).to(embed_indices)
@@ -152,7 +158,7 @@ class VQ_Quantizer(nn.Module):
             new_embed_indices = torch.clamp(new_embed_indices, max=self._num_embed - 1, min=0)
             embed_indices = new_embed_indices
         # print("noise ",noise.shape)
-#         print("The Embeding indices",embed_indices.flatten(), embed_indices.shape)
+#         print("The Embeding indices", embed_indices.shape)
 #         print("Embedding indices reshaped", embed_indices.view(50, -1))
         embed_Matrix = torch.zeros_like(dist)
         #         embed_Matrix = torch.zeros(embed_indices.shape[0], self._num_embed).to(x)
@@ -164,7 +170,7 @@ class VQ_Quantizer(nn.Module):
 
         # get the corresponding e vectors
         quantizer = torch.matmul(embed_Matrix, self._embedding.weight)
-        #         print("the quantizer", quantizer.shape, quantizer)
+#         print("the quantizer", quantizer.shape)
         quantizer = quantizer.view(x_shape).permute(0, 2, 1).contiguous()
 #         print("the quantizer", quantizer.shape, quantizer)
 
@@ -320,6 +326,7 @@ class VQ_MST_VAE(nn.Module):
         self._commit_loss = args.commit_loss
         self._reduction = args.reduction
         self._modified = args.modified
+        self._robust = args.robust
         # if self._modified:
         #     self._num_embed = self._n_channels * 4 * self._num_layers
         # else:
@@ -350,20 +357,25 @@ class VQ_MST_VAE(nn.Module):
         return 0.8 * λ
     
     def calc_iqr(self, data):
-        q1 = data.quantile(0.25,0)
-        q3 = data.quantile(0.75,0)
-    #     print((q3-q1).shape)
+#         print(data.shape)
+        q1 = data.quantile(0.25,-1)
+        q3 = data.quantile(0.75,-1)
+#         print((q3-q1).shape)
         return q3-q1
     
-    def criterion(self, x, x_rec, c=0.00000001, lamda = 0.1):
-        iqr_x = lamda * self.calc_iqr(x)
-        iqr_x_rec = lamda * self.calc_iqr(x_rec)
+    def criterion(self, x_rec, x, c=0.05, lamda = 0.1):
+#         iqr_x = lamda * self.calc_iqr(x)
+#         iqr_x_rec = lamda * self.calc_iqr(x_rec)
+        
+        iqr_x = lamda * self.calc_iqr(abs(x-x_rec))
 
-        main_term = ((iqr_x -iqr_x_rec)/c )**2
+        main_term = (iqr_x/c )**2
+#         print(main_term)
         loss = 2 * ( main_term/(4 + main_term) )
+#         print(loss)
         return loss.mean()
 
-    def forward(self, x, split_loss=False, ouput_indices=False, robust=True):
+    def forward(self, x, split_loss=False, ouput_indices=False):
         mu, logvar = self.encoder(x)
 
         z = self.reparametrization_trick(mu, logvar)
@@ -373,6 +385,7 @@ class VQ_MST_VAE(nn.Module):
 #         print(z.shape)
 #         print("Is encoder output larger than the set of vectors?", is_larger)
         e, loss_quantize, indices = self.quantizer(z)
+#         print(indices.shape)
 
 #         print("----------------Encoder Output-------------")
 #         print("mu and logvar", mu.shape, logvar.shape)
@@ -385,8 +398,8 @@ class VQ_MST_VAE(nn.Module):
         #         mu_dec, logvar_dec = self.decoder(e)
         #         x_rec = self.reparametrization_trick(mu_dec, mu_dec)
         x_rec, mu_rec, logvar_rec = self.decoder(e)
-        if robust:
-            loss_rec = self.criterion(x, x_rec)
+        if self._robust:
+            loss_rec = self.criterion(x_rec, x)
         else:
             loss_rec = F.mse_loss(x_rec, x, reduction='sum')
         loss = loss_rec + loss_quantize

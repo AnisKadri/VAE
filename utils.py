@@ -57,6 +57,7 @@ class GENV:
                  no_window=NoWindow,
                  modified=True,
                  reduction=True,
+                 robust=False,
                  min_max=True
                 ):
         
@@ -65,7 +66,7 @@ class GENV:
         self.val = val                             # Max value when generating the time series.
         self.n_channels = n_channels               # Number of channels in each time series.
         self.n_samples = n_samples                 # Number of samples per generated time series.
-        self.samples_factor = samples_factor     # How many time series to generate.
+        self.samples_factor = samples_factor       # How many time series to generate.
         self.bs = bs                               # Batch size.
         self.shuffle = shuffle                     # Shuffle option in DataLoader.
         self.L = L                                 # Window length (288 is one day of 5 mins tackt).
@@ -87,6 +88,7 @@ class GENV:
         self.modified = modified                   # double the number of channels in each TC layer if True
         self.reduction = reduction                 # merge the long and short enc outputs if True   
         self.min_max = min_max                     # choose which normalization to use
+        self.robust = robust                       # If True Geman-McClure loss with lambda = 0.1 will be used (from RESIST paper)
         self.enc_out = self.enc_output(            # number of channels at enc output
             self.modified,   
             self.reduction)
@@ -198,7 +200,7 @@ def rebuild_TS(model, train_loader, args, keep_norm= False):
         
         denorm_data = revert_min_max_s(data, norm) if min_max else revert_standarization(data, norm)
         denorm_rec =  revert_min_max_s(x_rec, norm) if min_max else revert_standarization(x_rec, norm)
-            
+        
         e_indices[idx: (idx+bs)] = indices.view(bs, args.enc_out, -1)
         Origin[idx: idx+bs] = denorm_data
         REC[idx: idx+bs] = denorm_rec
@@ -269,6 +271,37 @@ def step_by_step_plot_NoWindow(model, data_loader, args, n=0):
     plot_rec(dataset[n].T, dataset[n].T, title = "Generated Time Serie")
     plot_rec(Origin_norm[n].T.cpu(), Origin_norm[n].T.cpu(), title="Normalized Time serie")
     plot_rec(Origin[n].T.cpu(), dataset[n].T, title="Reverted Time serie to original stat vs Generated ")
+    
+def show_results_long(model, data, args, vq=False, xlim=800):
+    
+    model_type = "VQ" if vq else "VAE" 
+    title = model_type +": Original data vs Reconstruction"
+    Origin_norm, REC_norm, _ = rebuild_TS_non_overlapping(model, data, args, keep_norm=True)
+    Origin, REC, indices = rebuild_TS_non_overlapping(model, data, args)
+    
+    plot_rec(Origin_norm[:xlim].cpu(), REC_norm[:xlim].cpu(), title=title+" (normalized)")
+    plot_rec(Origin[:xlim].cpu(), REC[:xlim].cpu(), title=title)
+    
+    if vq:
+        codebook = model.quantizer._embedding.weight
+        heatmap = create_heatmap(codebook.cpu().detach().numpy() )
+        plot_indices(indices.cpu())
+        
+def show_results(model, data, args, vq=False, sample=1):
+    
+    model_type = "VQ" if vq else "VAE" 
+    sample= args.samples_factor * args.n_samples if sample > args.samples_factor * args.n_samples else sample
+    title = model_type +": Original data vs Reconstruction"
+    Origin_norm, REC_norm, _ = rebuild_TS(model, data, args, keep_norm=True)
+    Origin, REC, indices = rebuild_TS(model, data, args)
+    
+    plot_rec(Origin_norm[sample].T.cpu(), REC_norm[sample].T.cpu(), title=title+" (normalized)")
+    plot_rec(Origin[sample].T.cpu(), REC[sample].T.cpu(), title=title)
+    
+    if vq:
+        codebook = model.quantizer._embedding.weight
+        heatmap = create_heatmap(codebook.cpu().detach().numpy() )
+        plot_indices(indices[sample].cpu())
 
 def plot_heatmap(ax_heatmap, codebook):
     ax_heatmap.clear()
@@ -305,17 +338,17 @@ def plot_indices(indices):
     
     plt.show()
     
-def generate_long_data(args, effects, periode_factor=182, effect="Seasonality", occurance=1, return_gen=False):
+def generate_long_data(args, effects, periode_factor=182, effect="Seasonality", occurance=1, return_gen=False, anomalies=False):
     args.periode *= periode_factor
     n_samples= args.n_samples
     args.n_samples = 1
     effects = set_effect(effect, effects, occurance)
     
     X_long = Gen2(args=args, effects=effects, fast=False)
-    X_long.add_random_pulse(0.05, 0.001)
-    X_long.sample()
+    if anomalies:
+        X_long.add_random_pulse(0.05, 0.001)
+        X_long.sample()
     x_long, params_long, e_params_long = X_long.parameters()
-    print(x_long.shape)
     X_long.show()
     args.periode = args.periode // periode_factor
     args.n_samples = n_samples
@@ -345,7 +378,7 @@ def generate_long_data(args, effects, periode_factor=182, effect="Seasonality", 
 #     train_data, val_data, test_data = create_loader_noWindow(x, labels, batch_size=batch_size, split=split, norm=norm)
 #     return train_data, val_data, test_data
 
-def generate_labeled_data(args, effects, effect="Seasonality", occurance=1, norm=True, return_gen=False):
+def generate_labeled_data(args, effects, effect="Seasonality", occurance=1, norm=True, return_gen=False, anomalies=False):
     effects = set_effect(effect, effects, occurance)
     
     X = Gen2(args=args, effects=effects)
@@ -353,7 +386,8 @@ def generate_labeled_data(args, effects, effect="Seasonality", occurance=1, norm
         print("generating: ", i)
         Y = Gen2(args=args, effects=effects)    
         X.merge(Y)
-    X.add_random_pulse(0.05, 0.01)
+    if anomalies:
+        X.add_random_pulse(0.05, 0.01)
 
     x, params, e_params = X.parameters()
     X.show(10)
@@ -1371,7 +1405,7 @@ def extract_param_per_effect(labels, e_params, effect_n, effect):
             # for each occurance of this effect loop through all the parameters of this effect 
             for param_type in e_params[effect]:
                 # skip the channel list
-                if param_type not in ["channel", "phaseshift", "index", "interval", "amplitude"]:
+                if param_type not in ["channel", "phaseshift", "index", "interval"]:
                     print("----------------------")
 
                     print("Parameter: ", param_type)
