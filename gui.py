@@ -5,6 +5,7 @@ from tkinter.messagebox import showinfo
 import tkinter as tk
 from tkinter import ttk
 from tkinter import *
+from utils import *
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -19,10 +20,10 @@ warnings.simplefilter("ignore", UserWarning)
 
 class VQ_gui(tk.Tk):
   @torch.no_grad()
-  def __init__(self, model, data, params, repetition, VQ):
+  def __init__(self, model, data, params, repetition, VQ, args):
     super().__init__()
     # Init variable vor the Gui
-    self.model, self.data, self.params, self.repetition, self.VQ = model, data, params, repetition, VQ
+    self.model, self.data, self.params, self.repetition, self.VQ, self.args = model, data, params, repetition, VQ, args
     self.model.eval()
     self.spinboxs, self.double_vars = [], []
     self.norm_vec_filled = False
@@ -34,8 +35,8 @@ class VQ_gui(tk.Tk):
     self.batch_size     = self.data.batch_size
     self.n_channels     = self.model._n_channels
     self.latent_dims = self.model._latent_dims
-    self.norm, self.avg_norm = self.get_average_norm_scale(data, v)
-    self.latents, self.avg_latents = self.get_latent_variables(data, v)
+    self.norm, self.avg_norm = self.get_average_norm_scale(data, model)
+    self.latents, self.avg_latents = self.get_latent_variables(data, model)
     self.num_embed       = self.model._n_channels
     self.code_book      = deepcopy(self.avg_latents)
     self.code_book_np   = self.code_book.detach().numpy()
@@ -46,7 +47,9 @@ class VQ_gui(tk.Tk):
     self.cov = params["cov"].squeeze()[:self.T]
 
     # Sample x, x_rec and the latent space
-    self.x, self.x_rec, self.x_rec_mean, self.mu, self.logvar, self.mu_dec_mean, self.logvar_dec_mean, self.norm_vec = self.sample_vae()
+    Origin_norm, REC_norm, indices = rebuild_TS(model, data, args, keep_norm=True)
+    self.x, self.x_rec, self.latent = rebuild_TS(model, data, args, keep_norm=False)
+    # self.x, self.x_rec, self.x_rec_mean, self.mu, self.logvar, self.mu_dec_mean, self.logvar_dec_mean, self.norm_vec = self.sample_vae()
 
     # self.x, self.mu, self.logvar, self.z, self.embed, self.x_rec, self.x_rec_mean, self.norm_vec = self.sample_from_data_VQ(model, data, repetition)
     # print("embed shape", self.embed.shape)
@@ -823,11 +826,15 @@ class VQ_gui(tk.Tk):
 
 
 if __name__ == "__main__":
-  n_channels = 1
-  latent_dims = 7
-  L = 60
-  i = 2
-  effect = "no_effect" # trend, seasonality, std_variation, trend_seasonality, no_effect
+  p=2
+  args = GENV(n_channels=2, latent_dims=10, n_samples=500, shuffle=False, periode=p, L=288 * p, min_max=False,
+              num_layers=3, robust=False, first_kernel=288)
+  n_channels = args.n_channels
+  latent_dims = args.latent_dims
+  L = args.L
+  batch_size = args.bs
+  i = 0
+  effect = "both" # trend, seasonality, std_variation, trend_seasonality, no_effect
 
 
   # x = torch.load(r'modules\data_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
@@ -836,35 +843,62 @@ if __name__ == "__main__":
 
   x = torch.load(r'modules\vq_vae_data_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
   params = torch.load(r'modules\vq_vae_params_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
-  v = torch.load(r'modules\vq_vae_model_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
+  e_params = torch.load(r'modules\vq_vae_e_params_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels, latent_dims, L, i))
+  vae = torch.load(r'modules\vq_vae_vae_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
 
 
   print(x)
   print(params)
-  print(v)
+  print(vae)
   x = torch.FloatTensor(x)
 
-  L = v._L
-  latent_dims = v._latent_dims
+  # L = v._L
+  # latent_dims = v._latent_dims
   batch_size = 22
   n = x.shape[1]
 
-  train_ = x[:, :int(0.8 * n)]
-  val_ = x[:, int(0.8 * n):int(0.9 * n)]
-  test_ = x[:, int(0.9 * n):]
-  train_data = DataLoader(slidingWindow(train_, L),
-                          batch_size=batch_size,
-                          shuffle=False
-                          )
-  val_data = DataLoader(slidingWindow(val_, L),
-                        batch_size=batch_size,
-                        shuffle=False
-                        )
-  test_data = DataLoader(slidingWindow(test_, L),
-                         batch_size=batch_size,
-                         shuffle=False
-                         )
+  effects = {
+    "Pulse": {
+      "occurances": 1,
+      "max_amplitude": 5,
+      "interval": 40,
+      "start": None
+    },
+    "Trend": {
+      "occurances": 10,
+      "max_slope": 0.002,
+      "type": "linear",
+      "start": None
+    },
+    "Seasonality": {
+      "occurances": 10,
+      "frequency_per_week": (14, 21),  # min and max occurances per week
+      "amplitude_range": (5, 20),
+      "start": -5
+    },
+    "std_variation": {
+      "occurances": 0,
+      "max_value": 10,
+      "interval": 30,
+      "start": None
+    },
+    "channels_coupling": {
+      "occurances": 0,
+      "coupling_strengh": 20
+    },
+    "Noise": {
+      "occurances": 0,
+      "max_slope": 0.005,
+      "type": "linear"
+    }
+  }
+  effects = set_effect(effect, effects, 2)
+  labels = extract_parameters(args, e_params=e_params, effects=effects)
+  labels = add_mu_std(labels, params)
 
-  app = VQ_gui(v, train_data, params, repetition=3, VQ=True)
+  train_data, val_data, test_data = create_loader_noWindow(x, args, labels, norm=True)
+
+
+  app = VQ_gui(vae, train_data, params, repetition=3, VQ=True)
 
   app.mainloop()

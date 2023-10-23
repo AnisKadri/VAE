@@ -833,105 +833,105 @@ class Variational_Autoencoder(nn.Module):
         return x_rec, loss, mu, logvar, mu_rec, logvar_rec
 
 
-def set_effect(effect):
-    if effect == "no_effect":
-        effects = {
-            "Pulse": {
-                "occurances": 0,
-                "max_amplitude": 1.5,
-                "interval": 40
-            },
-            "Trend": {
-                "occurances": 0,
-                "max_slope": 0.005,
-                "type": "linear"
-            },
-            "Seasonality": {
-                "occurances": 0,
-                "frequency_per_week": (7, 14),  # min and max occurances per week
-                "amplitude_range": (5, 20),
-            },
-            "std_variation": {
-                "occurances": 0,
-                "max_value": 10,
-                "interval": 1000,
-            },
-            "channels_coupling": {
-                "occurances": 0,
-                "coupling_strengh": 20
-            },
-            "Noise": {
-                "occurances": 0,
-                "max_slope": 0.005,
-                "type": "linear"
-            }
-        }
-    elif effect == "trend":
-        effects = {
-            "Pulse": {
-                "occurances": 0,
-                "max_amplitude": 1.5,
-                "interval": 40
-            },
-            "Trend": {
-                "occurances": 1,
-                "max_slope": 0.005,
-                "type": "linear"
-            },
-            "Seasonality": {
-                "occurances": 0,
-                "frequency_per_week": (7, 14),  # min and max occurances per week
-                "amplitude_range": (5, 20),
-            },
-            "std_variation": {
-                "occurances": 0,
-                "max_value": 10,
-                "interval": 1000,
-            },
-            "channels_coupling": {
-                "occurances": 0,
-                "coupling_strengh": 20
-            },
-            "Noise": {
-                "occurances": 0,
-                "max_slope": 0.005,
-                "type": "linear"
-            }
-        }
-    elif effect == "seasonality":
-        effects = {
-            "Pulse": {
-                "occurances": 0,
-                "max_amplitude": 1.5,
-                "interval": 40
-            },
-            "Trend": {
-                "occurances": 0,
-                "max_slope": 0.005,
-                "type": "linear"
-            },
-            "Seasonality": {
-                "occurances": 1,
-                "frequency_per_week": (7, 14),  # min and max occurances per week
-                "amplitude_range": (5, 20),
-            },
-            "std_variation": {
-                "occurances": 0,
-                "max_value": 10,
-                "interval": 1000,
-            },
-            "channels_coupling": {
-                "occurances": 0,
-                "coupling_strengh": 20
-            },
-            "Noise": {
-                "occurances": 0,
-                "max_slope": 0.005,
-                "type": "linear"
-            }
-        }
-
-    return effects
+# def set_effect(effect):
+#     if effect == "no_effect":
+#         effects = {
+#             "Pulse": {
+#                 "occurances": 0,
+#                 "max_amplitude": 1.5,
+#                 "interval": 40
+#             },
+#             "Trend": {
+#                 "occurances": 0,
+#                 "max_slope": 0.005,
+#                 "type": "linear"
+#             },
+#             "Seasonality": {
+#                 "occurances": 0,
+#                 "frequency_per_week": (7, 14),  # min and max occurances per week
+#                 "amplitude_range": (5, 20),
+#             },
+#             "std_variation": {
+#                 "occurances": 0,
+#                 "max_value": 10,
+#                 "interval": 1000,
+#             },
+#             "channels_coupling": {
+#                 "occurances": 0,
+#                 "coupling_strengh": 20
+#             },
+#             "Noise": {
+#                 "occurances": 0,
+#                 "max_slope": 0.005,
+#                 "type": "linear"
+#             }
+#         }
+#     elif effect == "trend":
+#         effects = {
+#             "Pulse": {
+#                 "occurances": 0,
+#                 "max_amplitude": 1.5,
+#                 "interval": 40
+#             },
+#             "Trend": {
+#                 "occurances": 1,
+#                 "max_slope": 0.005,
+#                 "type": "linear"
+#             },
+#             "Seasonality": {
+#                 "occurances": 0,
+#                 "frequency_per_week": (7, 14),  # min and max occurances per week
+#                 "amplitude_range": (5, 20),
+#             },
+#             "std_variation": {
+#                 "occurances": 0,
+#                 "max_value": 10,
+#                 "interval": 1000,
+#             },
+#             "channels_coupling": {
+#                 "occurances": 0,
+#                 "coupling_strengh": 20
+#             },
+#             "Noise": {
+#                 "occurances": 0,
+#                 "max_slope": 0.005,
+#                 "type": "linear"
+#             }
+#         }
+#     elif effect == "seasonality":
+#         effects = {
+#             "Pulse": {
+#                 "occurances": 0,
+#                 "max_amplitude": 1.5,
+#                 "interval": 40
+#             },
+#             "Trend": {
+#                 "occurances": 0,
+#                 "max_slope": 0.005,
+#                 "type": "linear"
+#             },
+#             "Seasonality": {
+#                 "occurances": 1,
+#                 "frequency_per_week": (7, 14),  # min and max occurances per week
+#                 "amplitude_range": (5, 20),
+#             },
+#             "std_variation": {
+#                 "occurances": 0,
+#                 "max_value": 10,
+#                 "interval": 1000,
+#             },
+#             "channels_coupling": {
+#                 "occurances": 0,
+#                 "coupling_strengh": 20
+#             },
+#             "Noise": {
+#                 "occurances": 0,
+#                 "max_slope": 0.005,
+#                 "type": "linear"
+#             }
+#         }
+#
+#     return effects
 def generate_data(n_channels, effect, L, periode=15, step=5, val=500 ):
     effects = set_effect(effect)
     X = Gen(periode, step, val, n_channels, effects)
