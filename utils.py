@@ -25,6 +25,8 @@ import random
 import pprint
 from IPython import display
 import scipy.fft as sf
+from scipy.signal import find_peaks
+import umap
 
 
 
@@ -58,6 +60,8 @@ class GENV:
                  modified=True,
                  reduction=True,
                  robust=False,
+                 an_percentage=0.05,
+                 an_max_amp=10,
                  min_max=True
                 ):
         
@@ -89,6 +93,8 @@ class GENV:
         self.reduction = reduction                 # merge the long and short enc outputs if True   
         self.min_max = min_max                     # choose which normalization to use
         self.robust = robust                       # If True Geman-McClure loss with lambda = 0.1 will be used (from RESIST paper)
+        self.an_percentage = an_percentage         # Percentage of random Pulse anomalies, between 0 and 1
+        self.an_max_amp = an_max_amp               # Max amplitude Pulse anomalies can take
         self.enc_out = self.enc_output(            # number of channels at enc output
             self.modified,   
             self.reduction)
@@ -103,6 +109,52 @@ class GENV:
         return out
 
 
+def autocov(x, k):
+    mean = np.mean(x, axis=0)
+    n = x.shape[-1]
+
+    autocovariance = sum((x[...,i] - mean) * (x[...,i + k] - mean) for i in range(n - k)) / n
+    return np.array(autocovariance)
+
+def calc_acf(data):
+    autocorr = np.empty_like(data)
+    autocv_0 = autocov(data, 0)
+    for i in range(data.shape[-1]):
+        autocv = autocov(data, i)
+        autocorr[i] = autocv/autocv_0
+    return autocorr
+
+def generate_acf(data):
+    acf = np.empty_like(data)
+    for i, sample in enumerate(data):
+        for j, channel in enumerate(sample):
+            acf[i,j] = calc_acf(channel.numpy())
+    return acf
+
+def identify_frequencies(autocorr, args, n_frequencies=1):
+    # Plot the autocorrelation function (ACF)
+    plt.figure(figsize=(12, 6))
+    plt.plot(autocorr, marker='o', linestyle='-')
+    plt.title('Autocorrelation Function (ACF)')
+    plt.xlabel('Lag')
+    plt.ylabel('Autocorrelation')
+    plt.grid(True)
+
+    # Find significant peaks in the ACF
+    threshold = 0.85
+    min_to_week = 7*24*60
+    max_lag = len(autocorr) // 2
+    peaks, _ = find_peaks(autocorr[:max_lag])
+    periodicities = [lag for lag in peaks if autocorr[lag] > threshold][:n_frequencies]
+
+    # Output the identified periodicities
+    print("Identified periodicities:",[(( 1/(periodicity*args.step) ) * min_to_week) for periodicity in periodicities])
+
+    # Plot the ACF with identified periodicities
+    plt.scatter(periodicities, [autocorr[lag] for lag in periodicities], color='red', marker='x', s=100, label='Periodicity Peaks')
+    plt.legend()
+    plt.show()
+    
 def get_means_indices(label):
     unique, idx, counts= torch.unique(label[:,0], return_inverse=True, return_counts=True)    
     _, ind_sorted = torch.sort(idx, stable=True)
@@ -201,7 +253,7 @@ def rebuild_TS(model, train_loader, args, keep_norm= False):
         denorm_data = revert_min_max_s(data, norm) if min_max else revert_standarization(data, norm)
         denorm_rec =  revert_min_max_s(x_rec, norm) if min_max else revert_standarization(x_rec, norm)
         
-        e_indices[idx: (idx+bs)] = indices.view(bs, args.enc_out, -1)
+        e_indices[idx: (idx+bs)] = e.view(bs, args.enc_out, -1)
         Origin[idx: idx+bs] = denorm_data
         REC[idx: idx+bs] = denorm_rec
         idx += bs
@@ -293,15 +345,16 @@ def show_results(model, data, args, vq=False, sample=1):
     sample= args.samples_factor * args.n_samples if sample > args.samples_factor * args.n_samples else sample
     title = model_type +": Original data vs Reconstruction"
     Origin_norm, REC_norm, _ = rebuild_TS(model, data, args, keep_norm=True)
-    Origin, REC, indices = rebuild_TS(model, data, args)
+    Origin, REC, latents = rebuild_TS(model, data, args)
     
     plot_rec(Origin_norm[sample].T.cpu(), REC_norm[sample].T.cpu(), title=title+" (normalized)")
     plot_rec(Origin[sample].T.cpu(), REC[sample].T.cpu(), title=title)
+    plot_indices(latents[sample].cpu())
     
     if vq:
         codebook = model.quantizer._embedding.weight
         heatmap = create_heatmap(codebook.cpu().detach().numpy() )
-        plot_indices(indices[sample].cpu())
+        
 
 def plot_heatmap(ax_heatmap, codebook):
     ax_heatmap.clear()
@@ -338,6 +391,8 @@ def plot_indices(indices):
     
     plt.show()
     
+
+    
 def generate_long_data(args, effects, periode_factor=182, effect="Seasonality", occurance=1, return_gen=False, anomalies=False):
     args.periode *= periode_factor
     n_samples= args.n_samples
@@ -346,7 +401,7 @@ def generate_long_data(args, effects, periode_factor=182, effect="Seasonality", 
     
     X_long = Gen2(args=args, effects=effects, fast=False)
     if anomalies:
-        X_long.add_random_pulse(0.05, 0.001)
+        X_long.add_random_pulse(0.001)
         X_long.sample()
     x_long, params_long, e_params_long = X_long.parameters()
     X_long.show()
@@ -528,6 +583,45 @@ def get_frequencies_per_week(v, train_data, args, n):
 
     return results
 
+def rescale_x_axis(ts, args):
+    n = len(ts)
+    t = np.arange(n)
+    scale_factor = 182 *args.split[0]
+    new_n =41761*2# int(scale_factor * n)
+    # Generate new time vector and zero-padded time series
+    new_t = np.linspace(0, n - 1, new_n)
+    new_ts = np.interp(new_t, t, ts)
+    return new_ts
+
+def find_freqs_p(denoised, n, args):
+    new_ts = rescale_x_axis(denoised, args)
+#     new_ts = denoised
+    freqs_w = []
+    i = 0
+    sample_rate = 12*24*7*2*365
+    N=len(new_ts)
+    X = sf.rfft(new_ts) #/ N
+    freqs = sf.rfftfreq(n=N, d=1/sample_rate)
+    while len(freqs_w) < n:
+        i += 1
+        max_freq_ind = np.argpartition(np.abs(X), -i)[-i:]
+        freqs_w = filter_close_values(freqs[max_freq_ind][:n], 0.005)
+    
+    return np.array(freqs_w, dtype=np.float64)
+
+def get_frequencies_per_week(v, train_data, args, n):
+
+    Origin_norm, REC_norm, _ = rebuild_TS(v, train_data, args, keep_norm=True)
+    denoised = denoise_data(Origin_norm.cpu())
+
+
+    freqs = np.empty((denoised.shape[0], args.n_channels, n))
+    for i, sample in enumerate(freqs):
+#         print(i)
+        for j, fs in enumerate(sample):
+            fs = find_freqs_p(denoised[i, j], n, args)
+            freqs[i,j] = fs
+    return freqs
 
 
 

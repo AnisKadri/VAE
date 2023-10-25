@@ -7,7 +7,7 @@ np.random.seed(10)
 
 
 class Gen2():
-    def __init__(self, args, n_samples=10, periode=30, step=5, val=1000, nchannels=3, effects=None, fast=True):
+    def __init__(self, args, effects=None, fast=True):
 
         # get the parameters
         self.step = args.step
@@ -16,6 +16,8 @@ class Gen2():
         self.val = args.val
         self.n_samples = args.n_samples
         self.fast = fast
+        self.an_percentage = args.an_percentage
+        self.an_max_amp = args.an_max_amp
         
         self.effects_params = {
             "Pulse": {
@@ -156,7 +158,7 @@ class Gen2():
         ground_val = self.x[channels, start_idxs].astype(np.int8) if self.fast else self.mu[channels, start_idxs].astype(np.int8)  
         
         amp_sign = 0.01 * np.sign(amp)
-        k = np.random.uniform(ground_val + amp_sign, ground_val * amplitude)  # new values
+        k = np.clip(np.random.uniform(ground_val + amp_sign, ground_val * amplitude), -self.an_max_amp, self.an_max_amp) # new values
 
         # add it to the channels
         for i in range(n_occ):
@@ -165,13 +167,13 @@ class Gen2():
             else:
                 self.mu[channels[i], start_idxs[i]: end_idxs[i]] += k[i].astype(np.float16)
                 
-    def add_random_pulse(self, percentage, amp):
+    def add_random_pulse(self, amp):
         # Merge samples and channels
         if self.fast:
             self.x = np.reshape(self.x, (self.n_samples * self.nchannels, -1))
 
         # extract parameters:        
-        occ, start_idxs, end_idxs = self.set_random_start(percentage)
+        occ, start_idxs, end_idxs = self.set_random_start()
         n_occ = self.n_samples * occ
 
         # transformation array to map the effect on the corresponding channels in each sample
@@ -190,7 +192,7 @@ class Gen2():
         ground_val = self.x[channels, start_idxs].astype(np.int8) if self.fast else self.mu[channels, start_idxs].astype(np.int8)  
         
         amp_sign = 0.01 * np.sign(amp)
-        k = np.random.uniform(ground_val + amp_sign, ground_val * amplitude)  # new values
+        k = np.clip(np.random.uniform(ground_val + amp_sign, ground_val * amplitude), -self.an_max_amp, self.an_max_amp)  # new values
 
         # add it to the channels
         for i in range(n_occ):
@@ -450,11 +452,10 @@ class Gen2():
         start_idxs = np.array( start * max_length, dtype=np.int32)        
         return start_idxs
     
-    def set_random_start(self, percentage):
-        # Define the desired percentage (x)
-
-        # Calculate the total number of indices you want
-        total_indices = int(percentage * self.n)  # Adjust 1000 based on your total number of points
+    def set_random_start(self):
+        # Get the percentage of anomalies in the TS and convert to indices number
+        percentage = self.an_percentage
+        total_indices = int(percentage * self.n)
 
         # Define the minimum and maximum group size
         min_group_size = 3
