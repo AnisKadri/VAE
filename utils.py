@@ -131,29 +131,31 @@ def generate_acf(data):
             acf[i,j] = calc_acf(channel.numpy())
     return acf
 
-def identify_frequencies(autocorr, args, n_frequencies=1):
-    # Plot the autocorrelation function (ACF)
-    plt.figure(figsize=(12, 6))
-    plt.plot(autocorr, marker='o', linestyle='-')
-    plt.title('Autocorrelation Function (ACF)')
-    plt.xlabel('Lag')
-    plt.ylabel('Autocorrelation')
-    plt.grid(True)
-
+def identify_frequencies(autocorr, args, n_frequencies=1, plot=True):
     # Find significant peaks in the ACF
-    threshold = 0.85
     min_to_week = 7*24*60
     max_lag = len(autocorr) // 2
-    peaks, _ = find_peaks(autocorr[:max_lag])
-    periodicities = [lag for lag in peaks if autocorr[lag] > threshold][:n_frequencies]
+    peaks, _ = find_peaks(autocorr[10:max_lag], distance=1, height=[0,None], plateau_size=1)
 
-    # Output the identified periodicities
-    print("Identified periodicities:",[(( 1/(periodicity*args.step) ) * min_to_week) for periodicity in periodicities])
+    periodicities = peaks[:n_frequencies]+10
+    freqs = [(( 1/(periodicity*args.step) ) * min_to_week) for periodicity in periodicities]
+    if plot:
+        # Plot the autocorrelation function (ACF)
+        plt.figure(figsize=(12, 6))
+        plt.plot(autocorr, marker='o', linestyle='-')
+        plt.title('Autocorrelation Function (ACF)')
+        plt.xlabel('Lag')
+        plt.ylabel('Autocorrelation')
+        plt.grid(True)        
 
-    # Plot the ACF with identified periodicities
-    plt.scatter(periodicities, [autocorr[lag] for lag in periodicities], color='red', marker='x', s=100, label='Periodicity Peaks')
-    plt.legend()
-    plt.show()
+        # Plot the ACF with identified periodicities
+        plt.scatter(periodicities, [autocorr[lag] for lag in periodicities], color='red', marker='x', s=100, label='Periodicity Peaks')
+        plt.legend()
+        plt.show()
+        
+        # Output the identified periodicities
+        print("Identified periodicities:",freqs)
+    return np.array(freqs)
     
 def get_means_indices(label):
     unique, idx, counts= torch.unique(label[:,0], return_inverse=True, return_counts=True)    
@@ -169,15 +171,14 @@ def filter_close_values(input_list, threshold):
 
     input_list.sort()  # Sort the list in ascending order
     filtered_list = [input_list[0]]
-#     print("input", input_list)
 
     for value in input_list[1:]:
-
         if abs(value - filtered_list[-1]) > threshold and abs(value % filtered_list[-1]) > threshold:
             filtered_list.append(value)
-#     print("filtred", filtered_list)
+    filtered_list = np.array(filtered_list)
+    filtered_array = filtered_list[filtered_list != 0]
 
-    return filtered_list
+    return filtered_array
 
 def suppress_prints(func):
     @wraps(func)
@@ -349,7 +350,10 @@ def show_results(model, data, args, vq=False, sample=1):
     
     plot_rec(Origin_norm[sample].T.cpu(), REC_norm[sample].T.cpu(), title=title+" (normalized)")
     plot_rec(Origin[sample].T.cpu(), REC[sample].T.cpu(), title=title)
-    plot_indices(latents[sample].cpu())
+    create_heatmap(latents[sample].cpu(), x_label="Decoder Input dim (channels)", title="Latent Variables")
+    plot_latent_per_channel(latents.cpu(), args)
+    plot_latent_per_dim(latents.cpu(), args)
+#     plot_indices(latents[sample].cpu())
     
     if vq:
         codebook = model.quantizer._embedding.weight
@@ -364,13 +368,14 @@ def plot_heatmap(ax_heatmap, codebook):
 
 
     return heatmap
-def create_heatmap(codebook):
+def create_heatmap(codebook, x_label="Num Embeddings in Codebook", title="Codebook"):
     fig, ax_heatmap = plt.subplots(figsize=(12, 6), dpi=100)
     heatmap = plot_heatmap(ax_heatmap, codebook.T)
 
     cbar = fig.colorbar(heatmap)
-    ax_heatmap.set_xlabel('Num of Embeddings')
+    ax_heatmap.set_xlabel(x_label)
     ax_heatmap.set_ylabel('Latent Dimensions')
+    ax_heatmap.set_title(title)
     plt.show()
     
     return ax_heatmap
@@ -382,6 +387,40 @@ def plot_rec(origin, rec, lines=None, title="Original vs Reconstruction"):
     ax.set_title(title)
     ax.grid()
     
+    plt.show()
+    
+def plot_latent_per_channel(latent, args, title="Latent space mapped in 2 dim for each channel"):
+    umap_result = []
+    for i in range(args.enc_out):
+        latent_grp = latent[:,i,:]
+        reducer = umap.UMAP(n_components=2)
+        embedding = reducer.fit_transform(latent_grp)
+        umap_result.append(embedding)
+     
+    fig, ax = plt.subplots(figsize=(10, 5))
+    
+    for embed in umap_result:
+        ax.scatter(embed[:,0], embed[:,1])
+      
+    ax.set_title(title)
+    ax.grid(True)
+    plt.show()
+    
+def plot_latent_per_dim(latent, args, title="Latent space mapped in 2 dim for each latent dimension"):
+    umap_result = []
+    for i in range(args.latent_dims):
+        latent_grp = latent[...,i]
+        reducer = umap.UMAP(n_components=2)
+        embedding = reducer.fit_transform(latent_grp)
+        umap_result.append(embedding)
+     
+    fig, ax = plt.subplots(figsize=(10, 5))
+    
+    for embed in umap_result:
+        ax.scatter(embed[:,0], embed[:,1])
+        
+    ax.set_title(title)
+    ax.grid(True)
     plt.show()
     
 def plot_indices(indices):
@@ -448,7 +487,7 @@ def generate_labeled_data(args, effects, effect="Seasonality", occurance=1, norm
     X.show(10)
 
     labels = extract_parameters(args, e_params=e_params, effects=effects)
-    labels = add_mu_std(labels, params)
+#     labels = add_mu_std(labels, params)
 
     train_data, val_data, test_data = create_loader_noWindow(x, args, labels, norm=norm)
     if return_gen:
@@ -554,40 +593,12 @@ def denoise_data(data):
         denoised[i] = denoise(d.unsqueeze(0).cpu())
     return denoised
 
-
-def get_frequencies_per_week(v, train_data, args, n):
-    data = train_data.dataset.data
-    size = data.dim()
-    N=len(data.shape[-1])
-    if size > 2:
-        Origin_norm, REC_norm, _ = rebuild_TS(v, train_data, args, keep_norm=True)
-    else:
-        Origin_norm, REC_norm, _ = rebuild_TS_non_overlapping(v, train_data, args, keep_norm=True)
-    denoised = denoise_data(Origin_norm.T.cpu())
-    print(denoised.shape)
-
-    N=len(denoised[0])
-    freqs_w = []
-    i = 0
-    while len(freqs_w) < n:
-        i += 1
-        X = sf.rfft(denoised[0]) #/ N
-        freqs = sf.rfftfreq(n=N, d=1/(24*12*7))
-
-        max_freq_ind = np.argpartition(np.abs(X), -i)[-i:]
-        freqs_w = filter_close_values(freqs[max_freq_ind], 0.2)
-
-#     print(freqs_w)
-#     print([fs % 14 for fs in freqs_w])
-    results = [fs % 14 for fs in freqs_w]
-
-    return results
-
 def rescale_x_axis(ts, args):
     n = len(ts)
     t = np.arange(n)
     scale_factor = 182 *args.split[0]
     new_n =41761*2# int(scale_factor * n)
+    
     # Generate new time vector and zero-padded time series
     new_t = np.linspace(0, n - 1, new_n)
     new_ts = np.interp(new_t, t, ts)
@@ -595,18 +606,18 @@ def rescale_x_axis(ts, args):
 
 def find_freqs_p(denoised, n, args):
     new_ts = rescale_x_axis(denoised, args)
-#     new_ts = denoised
     freqs_w = []
-    i = 0
-    sample_rate = 12*24*7*2*365
-    N=len(new_ts)
+    i, sample_rate, N = 0, 12*24*7*2*365, len(denoised)
+
     X = sf.rfft(new_ts) #/ N
     freqs = sf.rfftfreq(n=N, d=1/sample_rate)
+    
     while len(freqs_w) < n:
         i += 1
         max_freq_ind = np.argpartition(np.abs(X), -i)[-i:]
         freqs_w = filter_close_values(freqs[max_freq_ind][:n], 0.005)
-    
+        
+#     freqs_w = [fs % 63 for fs in freqs_w]    
     return np.array(freqs_w, dtype=np.float64)
 
 def get_frequencies_per_week(v, train_data, args, n):
@@ -614,14 +625,57 @@ def get_frequencies_per_week(v, train_data, args, n):
     Origin_norm, REC_norm, _ = rebuild_TS(v, train_data, args, keep_norm=True)
     denoised = denoise_data(Origin_norm.cpu())
 
-
     freqs = np.empty((denoised.shape[0], args.n_channels, n))
     for i, sample in enumerate(freqs):
-#         print(i)
         for j, fs in enumerate(sample):
             fs = find_freqs_p(denoised[i, j], n, args)
             freqs[i,j] = fs
+            
     return freqs
+
+def get_frequencies_per_week_acf(v, data, args, n):
+    
+    freqs = np.empty((data.shape[0], args.n_channels, n))    
+    acf = generate_acf(data)
+    
+    for i in range(data.shape[0]):
+        for j in range(data.shape[1]):
+            autocorr = acf[i, j]
+            freqs[i,j] = identify_frequencies(autocorr, args, n, plot=False)
+    return freqs
+
+
+def find_freqs(denoised, n):
+    freqs_w = []
+    i, sample_rate, N = 0, 24*12*7, len(denoised)
+
+    X = sf.rfft(denoised) #/ N
+    freqs = sf.rfftfreq(n=N, d=1/sample_rate)
+    
+    while len(freqs_w) < n:
+        i += 1
+        max_freq_ind = np.argpartition(np.abs(X), -i)[-i:]
+#         max_freq_ind, _ = find_peaks(np.abs(X), distance=20)
+#         freqs_w = freqs[max_freq_ind]
+        freqs_w = filter_close_values(freqs[max_freq_ind], 0.2)
+        
+#     while len(freqs_w) > n:
+#         freqs_w = freqs_w[:-1]
+        
+    freqs_w = [fs % 14 for fs in freqs_w]
+    return np.array(freqs_w[:n], dtype=np.float64)
+
+def get_frequencies_per_week_long(v, train_data, args, n):
+    
+    Origin_norm, REC_norm, _ = rebuild_TS_non_overlapping(v, train_data, args, keep_norm=True)
+    denoised = denoise_data(Origin_norm.T.cpu()) 
+    
+    freqs = np.empty((args.n_channels, n))
+    for i in range(args.n_channels):
+        fs = find_freqs(denoised[i], n)
+        freqs[i] = fs
+        
+    return fs
 
 
 
