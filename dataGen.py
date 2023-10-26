@@ -263,6 +263,7 @@ class Gen2():
         amps = np.random.randint(low=amp[0], high=amp[1], size=n_occ)  # max amplitude
         phases = np.random.randint(180, size=n_occ)  # shift to be applied
         start_idxs = self.set_start_idxs(season_start, occ)
+#         print(start_idxs)
 
         # save the Trends parameters
         self.save_generated_effect("Seasonality", [channels - transform, freqs, amps, phases])
@@ -448,8 +449,9 @@ class Gen2():
             start = np.ones(n_occ, dtype=np.int8)
         elif start < 0:
             start = np.zeros(n_occ, dtype=np.int8)
-            
-        start_idxs = np.array( start * max_length, dtype=np.int32)        
+        elif type(start) is not type(list()):
+            start = [start]
+        start_idxs = np.array( [s*max_length for s in start], dtype=np.int64)     
         return start_idxs
     
     def set_random_start(self):
@@ -484,7 +486,6 @@ class Gen2():
         n_occ = self.n_samples * num_groups
         start = np.random.uniform(size=n_occ)
         start_idxs = np.array( start * max_length, dtype=np.int32)
-        print(start_idxs.shape)
         
         group_sizes = np.tile(group_sizes, self.n_samples)
         end_idxs = start_idxs + group_sizes
