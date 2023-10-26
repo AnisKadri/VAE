@@ -27,6 +27,7 @@ from IPython import display
 import scipy.fft as sf
 from scipy.signal import find_peaks
 import umap
+import scipy.stats as st
 
 
 
@@ -109,6 +110,83 @@ class GENV:
         return out
 
 
+def get_statistics_global(data):
+    stats_names_global = ["Mean global: ", "Std global: ", "Max global: ", "Min global: ", "Skew global: ", "Kurt global: "]
+
+    mean_global = data.mean(dim=-1, keepdim=True).squeeze()
+    std_global = data.std(dim=-1, keepdim=True).squeeze()
+    max_global, _ = data.max(dim=-1, keepdim=True)
+    min_global, _ = data.min(dim=-1, keepdim=True)
+    skew_global =  torch.tensor(st.skew(data, axis=-1))
+    kurt_global =  torch.tensor(st.kurtosis(data, axis=-1))
+    
+    stats_global = torch.stack([mean_global, std_global, max_global.squeeze(), min_global.squeeze(), skew_global, kurt_global], axis=0)
+    
+    return stats_names_global, stats_global
+
+def get_statistics_window(model, train_data, args, Origin=True):
+    
+    stats_names_window = ["Mean window: ", "Std window: ", "Max Window: ", "Min window:", "Skew window: ", "Kurt window: "]
+    
+    for i, (data_tup, label, norm) in enumerate(train_data):
+        data = pick_data(data_tup, args)
+        norm = [n.to(args.device) for n in norm]
+        x_rec, loss, mu, logvar, mu_rec, logvar_rec, e, indices = model(data, ouput_indices=True)
+        
+        if Origin:
+            denorm_data = revert_standarization(data, norm).cpu()
+        else: 
+            denorm_data = revert_standarization(x_rec, norm).cpu()
+            
+        mean_window = denorm_data.mean(dim=-1)
+        std_window = denorm_data.std(dim=-1)
+        max_window, _ = denorm_data.max(dim=-1, keepdim=True)
+        min_window, _ = denorm_data.min(dim=-1, keepdim=True)
+        skew_window =  torch.tensor(st.skew(denorm_data, axis=-1))
+        kurt_window =  torch.tensor(st.kurtosis(denorm_data, axis=-1))
+        
+    stats_window = torch.stack([mean_window, std_window, max_window.squeeze(), min_window.squeeze(), skew_window, kurt_window], axis=0)
+    
+    return stats_names_window, stats_window
+
+def get_stats_loss(model, train_data, args, long=True):
+    if long:
+        Origin, REC, _ = rebuild_TS_non_overlapping(model, train_data, args, keep_norm=False)
+        Origin, REC = Origin.T, REC.T
+    else:
+        Origin, REC, _ = rebuild_TS(model, train_data, args, keep_norm=False)
+
+    names_global, stats_global = get_statistics_global(Origin.cpu())
+    names_window, stats_window = get_statistics_window(model, train_data, args)
+    
+    _, stats_global_rec = get_statistics_global(REC.cpu())
+    _, stats_window_rec = get_statistics_window(model, train_data, args, Origin=False)
+
+    
+    global_loss = F.mse_loss(stats_global_rec, stats_global, reduction='none')
+    global_loss = global_loss.mean(dim=(-1)) if long else global_loss.mean(dim=(-1,-2))
+    window_loss = F.mse_loss(stats_window_rec, stats_window, reduction='none').mean(dim=(-1,-2))
+    
+
+    
+    return names_global, global_loss, names_window, window_loss
+
+def print_stats_results(model, train_data, args, long=True, n_frequencies=0):
+    names_global, global_loss, names_window, window_loss = get_stats_loss(model, train_data, args, long=long)
+    
+    for i, el in enumerate(names_global): 
+        print(el, global_loss[i].item())
+#     if long:
+#         freqs_true = get_frequencies_per_week_long(model, train_data, args, n=n_frequencies, Origin=True)
+#         freqs_rec = get_frequencies_per_week_long(model, train_data, args, n=n_frequencies, Origin=False)
+#         print("Frequencies per Week (Original): ", freqs_true) 
+#         print("Frequencies per Week (Original): ", freqs_true)
+        
+    print("\n")
+    for i, el in enumerate(names_window): 
+        print(el, window_loss[i].item())
+    print("\n")
+        
 def autocov(x, k):
     mean = np.mean(x, axis=0)
     n = x.shape[-1]
@@ -340,7 +418,7 @@ def show_results_long(model, data, args, vq=False, xlim=800):
         heatmap = create_heatmap(codebook.cpu().detach().numpy() )
         plot_indices(indices.cpu())
         
-def show_results(model, data, args, vq=False, sample=1):
+def show_results(model, data, args, vq=False, sample=1, plot_latent=True):
     
     model_type = "VQ" if vq else "VAE" 
     sample= args.samples_factor * args.n_samples if sample > args.samples_factor * args.n_samples else sample
@@ -351,8 +429,9 @@ def show_results(model, data, args, vq=False, sample=1):
     plot_rec(Origin_norm[sample].T.cpu(), REC_norm[sample].T.cpu(), title=title+" (normalized)")
     plot_rec(Origin[sample].T.cpu(), REC[sample].T.cpu(), title=title)
     create_heatmap(latents[sample].cpu(), x_label="Decoder Input dim (channels)", title="Latent Variables")
-    plot_latent_per_channel(latents.cpu(), args)
-    plot_latent_per_dim(latents.cpu(), args)
+    if plot_latent:
+        plot_latent_per_channel(latents.cpu(), args)
+        plot_latent_per_dim(latents.cpu(), args)
 #     plot_indices(latents[sample].cpu())
     
     if vq:
@@ -481,7 +560,7 @@ def generate_labeled_data(args, effects, effect="Seasonality", occurance=1, norm
         Y = Gen2(args=args, effects=effects)    
         X.merge(Y)
     if anomalies:
-        X.add_random_pulse(0.05, 0.01)
+        X.add_random_pulse(0.001)
 
     x, params, e_params = X.parameters()
     X.show(10)
@@ -665,10 +744,10 @@ def find_freqs(denoised, n):
     freqs_w = [fs % 14 for fs in freqs_w]
     return np.array(freqs_w[:n], dtype=np.float64)
 
-def get_frequencies_per_week_long(v, train_data, args, n):
+def get_frequencies_per_week_long(v, train_data, args, n, Origin=False):
     
     Origin_norm, REC_norm, _ = rebuild_TS_non_overlapping(v, train_data, args, keep_norm=True)
-    denoised = denoise_data(Origin_norm.T.cpu()) 
+    denoised = denoise_data(Origin_norm.T.cpu()) if Origin else denoise_data(REC_norm.T.cpu())
     
     freqs = np.empty((args.n_channels, n))
     for i in range(args.n_channels):
@@ -1561,7 +1640,7 @@ def extract_param_per_effect(labels, e_params, effect_n, effect):
 
                     # look for the next empty slot in the labels tensor
                     next_idx = get_next_empty_index(labels[sample][channel][effect_n])
-                    print("Correspending tensor: ", labels[sample][channel][effect_n]) 
+#                     print("Correspending tensor: ", labels[sample][channel][effect_n]) 
                     print("Next Index: ", next_idx)
 
                     #get the value of the parameter
@@ -1586,28 +1665,63 @@ def get_max_occ(effects):
 
     return max_occ
 @suppress_prints
-def squeeze_labels(labels):
-    new_labels = []
-    idxs = labels.nonzero()
+# def squeeze_labels(labels):
+#     new_labels = []
+#     idxs = labels.nonzero()
     
-    for index in idxs:
-        print(index)
-        sample = index[0]
-        ch = index[1]    
-        new_val = [sample, ch, labels[index[0], index[1], index[2], index[3]]]
-        new_labels.append(new_val)
+#     for index in idxs:
+#         print(index)
+#         sample = index[0]
+#         ch = index[1]    
+#         new_val = [sample, ch, labels[index[0], index[1], index[2], index[3]]]
+#         new_labels.append(new_val)
         
-    new_labels = torch.tensor(new_labels)
+#     new_labels = torch.tensor(new_labels)
+#     return new_labels
+def squeeze_labels_per_channel(labels, args, max_occ):
+    
+    # New labels of shape [Samples, Channels, values]
+    new_labels = torch.zeros(labels.shape[0], args.n_channels, max_occ)
+    labels = labels.view(labels.shape[0], labels.shape[1], -1)
+    print(labels.shape)
+    
+    # extract the relevant values
+    for i, sample in enumerate(labels):
+        for j, channel in enumerate(sample):
+            idxs = channel.nonzero()
+            for k, idx in enumerate(idxs):
+                new_labels[i, j, k] = channel[idxs[k]]
+    # remove extra zeros to reduce last dim of new labels
+    max_count = (new_labels != 0).sum(dim=2).max()
+    new_labels = new_labels[...,:max_count].view(labels.shape[0], -1)     
+    
+    return new_labels
+@suppress_prints
+def squeeze_labels(labels, args, max_occ):
+    # New labels of shape [Samples, values]
+    new_labels = torch.zeros(labels.shape[0], args.n_channels * max_occ)
+    labels = labels.view(labels.shape[0], -1)
+    
+    # extract the relevant values
+    for i, sample in enumerate(labels):
+        idxs = sample.nonzero()
+        for k, idx in enumerate(idxs):
+            new_labels[i, k] = sample[idx]
+            
+    # remove extra zeros to reduce last dim of new labels
+    max_count = (new_labels != 0).sum(dim=1).max()
+    new_labels = new_labels[...,:max_count]     
+    
     return new_labels
 
 def extract_parameters(args, e_params, effects):
     # create the labels tensor
     n_effects = len(effects)
-    max_occ = get_max_occ(effects)
+    max_occ = 4 * get_max_occ(effects)
     n_channels = args.n_channels
     n_samples = args.n_samples * args.samples_factor
     if n_samples==None:
-        labels = torch.zeros((n_channels, n_effects, 4 * max_occ))
+        labels = torch.zeros((n_channels, n_effects, max_occ))
     else:
         labels = torch.zeros((n_samples, n_channels, n_effects, 4 * max_occ))
     
@@ -1615,7 +1729,7 @@ def extract_parameters(args, e_params, effects):
     for (effect_n, effect) in enumerate(e_params):
         if effect != "Channels_Coupling" and e_params[effect]["channel"] !=[]:
             extract_param_per_effect(labels, e_params, effect_n, effect)
-    labels = squeeze_labels(labels)    
+    labels = squeeze_labels(labels, args, max_occ)    
         
     return labels
 

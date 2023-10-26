@@ -121,8 +121,15 @@ class TCVAE_Encoder_unified(nn.Module):
                 self.cnn_layers.append(nn.BatchNorm1d(self.n_channels * 2 * (i + 1)))
 
         # MLP Layers for Mu and logvar output
-        self.encoder_mu = nn.Linear(self.lin_input, self.lin_output)
-        self.encoder_logvar = nn.Linear(self.lin_input, self.lin_output)
+        self.encoder_mu = nn.Sequential(
+                                nn.Linear(self.lin_input, self.lin_output),  # Linear layer 
+                                nn.ReLU(True)  # Sigmoid activation function
+                            )
+#         nn.Linear(self.lin_input, self.lin_output)
+        self.encoder_logvar = nn.Sequential(
+                                nn.Linear(self.lin_input, self.lin_output),  # Linear layer 
+                                nn.ReLU(True)  # Sigmoid activation function
+                            )
 
         # Init CNN
         self.cnn_layers.apply(init_weights)

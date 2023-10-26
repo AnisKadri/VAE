@@ -115,7 +115,8 @@ class VQ_Quantizer(nn.Module):
         self._commit_loss = args.commit_loss
 
         self._embedding = nn.Embedding(self._num_embed, self._dim_embed)
-        self._embedding.weight.data.uniform_(-1 / self._num_embed, 1 / self._num_embed)
+        self._embedding.weight.data.uniform_(0, 1 / self._num_embed)
+        print(self._embedding.weight)
 
         self.register_buffer('_ema_cluster_size', torch.zeros(self._num_embed))
         self._ema_w = nn.Parameter(torch.Tensor(self._num_embed, self._dim_embed))
