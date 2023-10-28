@@ -23,10 +23,11 @@ from sklearn import linear_model
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.mixture import GaussianMixture
 from sklearn.metrics import accuracy_score, recall_score, f1_score, roc_curve, roc_auc_score, auc
+import copy
 
 
-
-def sample_anomaly(X, anomaly_type, anomaly):
+def sample_anomaly(X_normal, anomaly_type, anomaly):
+    X = copy.deepcopy(X_normal)
     if anomaly["occurances"] == 0:
         return
     if anomaly_type == "Pulse":
@@ -40,13 +41,14 @@ def sample_anomaly(X, anomaly_type, anomaly):
     elif anomaly_type == "channels_coupling":
         X.add_channels_coupling(anomaly)
     X.sample()
+    return X
     
-def add_anomaly_long(X_long, args, anomaly_type, anomaly, periode_factor=182, return_gen=False):
+def add_anomaly_long(X, args, anomaly_type, anomaly, periode_factor=182, return_gen=False):
     args.periode *= periode_factor
     n_samples= args.n_samples
     args.n_samples = 1
     
-    sample_anomaly(X_long, anomaly_type, anomaly)
+    X_long = sample_anomaly(X, anomaly_type, anomaly)
     
     x_long, params_long, e_params_long = X_long.parameters()
     X_long.show()
@@ -60,28 +62,55 @@ def add_anomaly_long(X_long, args, anomaly_type, anomaly, periode_factor=182, re
     else:
         return train_data_long, val_data_long, test_data_long
         
-def get_anomalies_labels(X, model, data, args, norm=False, group_size=3):
+def get_pulse_anomalies_labels_mask(X, args):
     
     x, params, e_params = X.parameters()
-    Origin, REC, _ = rebuild_TS_non_overlapping(model, data, args, keep_norm=norm)
+    
+    if e_params['Pulse']["channel"] == []:
+        print("There's no Pulse Anomalies in the given data")
+        return
 
     channels = e_params['Pulse']["channel"][0]
     indexes = e_params['Pulse']["index"][0]
     
-    #Create a mask for the anomalies
-    n_train = Origin.shape[0]
+    #Create a mask for pulse anomalies
     mask = np.full((args.n_channels, x.shape[-1]), False)
-#     if mask.ndim < 2: mask = mask[np.newaxis, :]
     mask[channels, indexes] = True
-    mask = mask[:, :n_train]
+    
+    return mask
+
+def get_other_anomalies_labels_mask(X, X_an, args):
+    
+    x, params, e_params = X.parameters()
+    x_an, params_an, e_params_an = X_an.parameters()
+    
+    an = np.abs(x_an-x)
+    mask = np.full((args.n_channels, x_an.shape[-1]), False)
+
+    for channel in range(args.n_channels):
+        anomalies = np.where(an[:, channel] > 5)[1]
+        mask[channel, anomalies] = True
+    
+    return mask
+def get_anomalies_label_mask(X, X_an, args):
+    
+    pulse_mask = get_pulse_anomalies_labels_mask(X, args)
+    other_mask = get_other_anomalies_labels_mask(X, X_an, args)
+    anomalies_mask = pulse_mask | other_mask
+    
+    return anomalies_mask
+
+def get_anomalies_label(mask, args, n, test=True):
+    mask = mask[:, -n:] if test else mask[:, :n]
     
     # Reduce the size of mask (grouped values)
-    reshaped_mask = mask.reshape(args.n_channels, -1, group_size)
+    reshaped_mask = mask.reshape(args.n_channels, -1, 1)
     
     # Get labels
     labels = np.any(reshaped_mask, axis=2)
-    
     return labels
+
+
 
 def get_anomalies_prediction(X, model, data, args, norm=True, threshold=0.03, group_size=3):
     
@@ -106,7 +135,7 @@ def get_anomalies_prediction(X, model, data, args, norm=True, threshold=0.03, gr
     
     return predictions
 
-def get_rec_loss(model, data, args, keep_norm=False):
+def get_rec_loss(model, data, args, keep_norm=True):
     Origin, REC, _ = rebuild_TS_non_overlapping(model, data, args, keep_norm=keep_norm)
     rec_loss = (REC - Origin)**2
     return rec_loss
@@ -114,10 +143,26 @@ def get_rec_loss(model, data, args, keep_norm=False):
 def get_y_scores(rec_loss, args):
     y_scores = np.empty((args.n_channels, rec_loss.shape[0]))
     for i in range(args.n_channels):
-        gmm = GaussianMixture(n_components=2, random_state=0)  # You can adjust the number of components
-        gmm.fit(rec_loss[:,i].reshape(-1, 1).cpu().numpy())
+        rec =rec_loss[:,i].reshape(-1, 1).cpu().numpy()
+        gmm = GaussianMixture(n_components=2, random_state=0)  
+        gmm.fit(rec)
 
         # Get the estimated probabilities of being in each component
-        outlier_probabilities = gmm.predict_proba(rec_loss[:,i].reshape(-1, 1).cpu().numpy())[:, 0]  # Probability of being in the first component
+        outlier_probabilities = gmm.predict_proba(rec)[:, 0]  # Probability of being in the first component
         y_scores[i] = 1-outlier_probabilities
     return y_scores
+
+def get_anomalies_from_y_scores(y_scores, args):
+    #Create a mask for the anomalies
+    anomalies_mask = np.full(y_scores.shape, False)
+
+    for i in range(args.n_channels):
+        anomalies = np.where(y_scores[i] > 0.99)[0]
+        anomalies_mask[i, anomalies] = True
+
+    return anomalies, anomalies_mask
+
+def get_anomalies_sector(anomalies, max_length=500):
+    some_anomalies = np.where(anomalies<max_length)[0]
+    sector_anomalies = anomalies[some_anomalies]
+    return sector_anomalies

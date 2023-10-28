@@ -171,6 +171,39 @@ def get_stats_loss(model, train_data, args, long=True):
     
     return names_global, global_loss, names_window, window_loss
 
+def plot_stats_results(models, train_data, args, long=True, n_frequencies=0):
+    colors = ['blue', 'red', 'purple', 'orange']
+    fig, ax = plt.subplots(figsize=(16,8))
+    for i, model in enumerate(models):
+        names_global, global_loss, names_window, window_loss = get_stats_loss(model, train_data, args, long=long)
+        combined_tensors = torch.cat((global_loss, window_loss), dim=0)
+        combined_names = names_global + names_window
+        
+        # Set the width of the bars
+        bar_width = 0.8
+
+        # Set the position of each label on the x-axis
+        x = np.arange(len(combined_names))
+
+        # Create the grouped bar chart
+        bar = ax.bar(x - bar_width/2, combined_tensors, bar_width, label=model.model_type, color=colors[i], alpha=1-0.4*i)
+
+        # Add labels, title, and legend
+        ax.set_xlabel('Metrics')
+        ax.set_ylabel('Values')
+        ax.set_title('Comparison of Metrics between VAE and VQ')
+        ax.set_xticks(x)
+        ax.set_xticklabels(combined_names)
+        ax.legend()
+        # Rotate and resize x labels
+        plt.xticks(rotation=45, fontsize=18)
+        plt.yticks(fontsize=18)
+
+
+    # Display the plot
+    plt.tight_layout()
+    plt.show()
+    
 def print_stats_results(model, train_data, args, long=True, n_frequencies=0):
     names_global, global_loss, names_window, window_loss = get_stats_loss(model, train_data, args, long=long)
     

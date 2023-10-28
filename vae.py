@@ -8,7 +8,8 @@ import torch.distributions
 class Variational_Autoencoder(nn.Module):
     def __init__(self, args, v_encoder, v_decoder):
         super(Variational_Autoencoder, self).__init__()
-
+        
+        self.model_type = "VAE"
         self._n_channels = args.n_channels
         self._num_layers = args.num_layers
         self._latent_dims = args.latent_dims
@@ -312,7 +313,9 @@ class VQ_Quantizer__spread(nn.Module):
 class VQ_MST_VAE(nn.Module):
     def __init__(self, args, v_encoder, v_decoder, v_quantizer):
         super(VQ_MST_VAE, self).__init__()
-
+        
+        
+        self.model_type = "VQ"
         self._n_channels = args.n_channels
         self._num_layers = args.num_layers
         self._num_embed = args.num_embed
