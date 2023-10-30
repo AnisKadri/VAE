@@ -28,7 +28,8 @@ import scipy.fft as sf
 from scipy.signal import find_peaks
 import umap
 import scipy.stats as st
-
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 
 
 
@@ -403,7 +404,7 @@ def rebuild_TS_non_overlapping(model, train_loader, args, keep_norm= False):
         
         denorm_data = revert_min_max(data, norm) if min_max else revert_standarization(data, norm)
         denorm_rec =  revert_min_max(x_rec, norm) if min_max else revert_standarization(x_rec, norm)
-
+        
         Origin    = torch.cat(( Origin, denorm_data.permute(1,0,2).reshape(args.n_channels, -1) ), axis=1)
         REC       = torch.cat(( REC, denorm_rec.permute(1,0,2).reshape(args.n_channels, -1)   ), axis=1)
         e_indices = torch.cat(( e_indices, indices.view(args.enc_out, -1)     ), axis=1)
@@ -461,7 +462,7 @@ def show_results(model, data, args, vq=False, sample=1, plot_latent=True):
     
     plot_rec(Origin_norm[sample].T.cpu(), REC_norm[sample].T.cpu(), title=title+" (normalized)")
     plot_rec(Origin[sample].T.cpu(), REC[sample].T.cpu(), title=title)
-    create_heatmap(latents[sample].cpu(), x_label="Decoder Input dim (channels)", title="Latent Variables")
+    create_heatmap(latents[sample].T.cpu(), x_label="Z", title="Latent Variables")
     if plot_latent:
         plot_latent_per_channel(latents.cpu(), args)
         plot_latent_per_dim(latents.cpu(), args)
@@ -481,12 +482,12 @@ def plot_heatmap(ax_heatmap, codebook):
 
     return heatmap
 def create_heatmap(codebook, x_label="Num Embeddings in Codebook", title="Codebook"):
-    fig, ax_heatmap = plt.subplots(figsize=(12, 6), dpi=100)
+    fig, ax_heatmap = plt.subplots(figsize=(12, 4), dpi=100)
     heatmap = plot_heatmap(ax_heatmap, codebook.T)
 
     cbar = fig.colorbar(heatmap)
     ax_heatmap.set_xlabel(x_label)
-    ax_heatmap.set_ylabel('Latent Dimensions')
+    ax_heatmap.set_ylabel('Decoder Input dim (channels)')
     ax_heatmap.set_title(title)
     plt.show()
     
@@ -494,51 +495,100 @@ def create_heatmap(codebook, x_label="Num Embeddings in Codebook", title="Codebo
 
 def plot_rec(origin, rec, lines=None, title="Original vs Reconstruction"):
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(rec, "r--", alpha = 0.5)
-    ax.plot(origin, "b-", alpha=0.2)
+    ax.plot(rec, "r--", alpha = 1, label="Reconstructed TS")
+    ax.plot(origin, "b", alpha=0.4, label="Original TS")
     ax.set_title(title)
+#     ax.legend(loc="upper right")
     ax.grid()
     
     plt.show()
     
-def plot_latent_per_channel(latent, args, title="Latent space mapped in 2 dim for each channel"):
+def plot_latent_per_channel(latent, args, title="2 dim per each channel"):
     umap_result = []
+    pca_results = []
+    tsne_results = []
     for i in range(args.enc_out):
         latent_grp = latent[:,i,:]
-        reducer = umap.UMAP(n_components=2)
+        pca = PCA(n_components=2, random_state=0)
+        reducer = umap.UMAP(n_components=2, random_state=0)
+        tsne = TSNE(n_components=2, random_state=0)
+        
+        pca_embed = pca.fit_transform(latent_grp)
+        tsne_embed =  tsne.fit_transform(latent_grp)
         embedding = reducer.fit_transform(latent_grp)
+        
+        pca_results.append(pca_embed)
+        tsne_results.append(tsne_embed)
         umap_result.append(embedding)
      
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax = plt.subplots(nrows=1, ncols=3,figsize=(12, 4), dpi=100)
     
-    for embed in umap_result:
-        ax.scatter(embed[:,0], embed[:,1])
+    for i, embed in enumerate(pca_results):
+        ax[0].scatter(embed[:,0], embed[:,1], label= "Channel {}".format(i))
+    for i, embed in enumerate(tsne_results):
+        ax[1].scatter(embed[:,0], embed[:,1], label= "Channel {}".format(i))
+    for i, embed in enumerate(umap_result):
+        ax[2].scatter(embed[:,0], embed[:,1], label= "Channel {}".format(i))
+    
       
-    ax.set_title(title)
-    ax.grid(True)
+    ax[0].set_title(title+ " (PCA)")
+    ax[1].set_title(title+ " (t-SNE)")
+    ax[2].set_title(title+ " (UMAP)")
+    ax[0].legend(loc="upper right")
+    ax[1].legend(loc="upper right")
+    ax[2].legend(loc="upper right")
+    
+    ax[0].grid(True)
+    ax[1].grid(True)
+    ax[2].grid(True)
     plt.show()
     
-def plot_latent_per_dim(latent, args, title="Latent space mapped in 2 dim for each latent dimension"):
+def plot_latent_per_dim(latent, args, title="2 dim per latent dimension"):
     umap_result = []
+    pca_results = []
+    tsne_results = []
     for i in range(args.latent_dims):
         latent_grp = latent[...,i]
-        reducer = umap.UMAP(n_components=2)
+        
+        pca = PCA(n_components=2, random_state=0)
+        reducer = umap.UMAP(n_components=2, random_state=0)
+        tsne = TSNE(n_components=2, random_state=0)
+        
+        pca_embed = pca.fit_transform(latent_grp)
+        tsne_embed =  tsne.fit_transform(latent_grp)
         embedding = reducer.fit_transform(latent_grp)
+        
+        pca_results.append(pca_embed)
+        tsne_results.append(tsne_embed)
         umap_result.append(embedding)
      
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax = plt.subplots(nrows=1, ncols=3,figsize=(12, 4), dpi=100)
     
-    for embed in umap_result:
-        ax.scatter(embed[:,0], embed[:,1])
+    for i, embed in enumerate(pca_results):
+        ax[0].scatter(embed[:,0], embed[:,1], label= "Z {}".format(i))
+    for i, embed in enumerate(tsne_results):
+        ax[1].scatter(embed[:,0], embed[:,1], label= "Z {}".format(i))
+    
+    for i, embed in enumerate(umap_result):
+        ax[2].scatter(embed[:,0], embed[:,1], label= "Z {}".format(i))
         
-    ax.set_title(title)
-    ax.grid(True)
+    ax[0].set_title(title+ " (PCA)")
+    ax[1].set_title(title+ " (t-SNE)")
+    ax[2].set_title(title+ " (UMAP)")
+    ax[0].legend(loc="upper right")
+    ax[1].legend(loc="upper right")
+    ax[2].legend(loc="upper right")
+    
+    ax[0].grid(True)
+    ax[1].grid(True)
+    ax[2].grid(True)
     plt.show()
     
 def plot_indices(indices):
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.plot(indices.T[:60, :6], alpha = 0.5)    
     ax.grid()
+    
     
     plt.show()
     
