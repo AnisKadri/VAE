@@ -35,7 +35,7 @@ class VQ_gui(tk.Tk):
     self.changed = []
 
     # Sample x, x_rec and the latent space
-    self.x, self.x_rec, self.latents = rebuild_TS(model, data, args, keep_norm=True)
+    self.x, self.x_rec, self.latents = rebuild_TS(model, data, args, keep_norm=False)
     if VQ:
         self.codebook = model.quantizer._embedding.weight
         indices = self.latent.mean(axis=-1).type(torch.int32)
@@ -100,7 +100,7 @@ class VQ_gui(tk.Tk):
 
 
   def create_heatmap(self, heatmap_frame):
-    self.heatmap_fig = Figure(figsize=(8, 6), dpi=100)
+    self.heatmap_fig = Figure(figsize=(4, 6), dpi=100)
     ax_heatmap = self.heatmap_fig.add_subplot(111)
     heatmap = self.plot_heatmap(ax_heatmap, self.latent)
     heatmap_canvas = FigureCanvasTkAgg(self.heatmap_fig, master=heatmap_frame)
@@ -243,7 +243,7 @@ class VQ_gui(tk.Tk):
   def change_sample(self):
       self.n = int(self.sample.get())
 
-      self.x, self.x_rec, self.latents = rebuild_TS(self.model, self.data, args, keep_norm=True)
+      self.x, self.x_rec, self.latents = rebuild_TS(self.model, self.data, args, keep_norm=False)
       if self.VQ:
           self.codebook = self.model.quantizer._embedding.weight
           indices = self.latent.mean(axis=-1).type(torch.int32)
@@ -307,7 +307,7 @@ class VQ_gui(tk.Tk):
 
     # create bottom frame for inputs and heatmap
     bottom_frame = tk.Frame(self)
-    bottom_frame.pack(side="bottom", fill="both", expand=True)
+    bottom_frame.pack(side="bottom", fill="both", expand=False)
 
     # create left and right subframes for inputs and heatmap
     inputs_frame = tk.Frame(bottom_frame)
@@ -877,15 +877,16 @@ class VQ_gui(tk.Tk):
 
 
 if __name__ == "__main__":
-  p=2
-  args = GENV(n_channels=2, latent_dims=4, n_samples=500, shuffle=False, periode=p, L=288 * p, min_max=False,
-              num_layers=3, robust=False, first_kernel=288, num_embed=1, modified=False)
+  i = 2
+  p = 2
+  effect = "both"
+  args = GENV(n_channels=1, latent_dims=5, n_samples=100, shuffle=False, periode=p, L=288 * p, min_max=True,
+              num_layers=3, robust=False, first_kernel=288, num_embed=512, modified=False)
   n_channels = args.n_channels
   latent_dims = args.latent_dims
   L = args.L
   batch_size = args.bs
-  i = 1
-  effect = "both" # trend, seasonality, std_variation, trend_seasonality, no_effect
+  effect = "Seasonality" # trend, seasonality, std_variation, trend_seasonality, no_effect
 
 
   # x = torch.load(r'modules\data_{}channels_{}latent_{}window.pt'.format(n_channels, latent_dims, L))
@@ -898,9 +899,9 @@ if __name__ == "__main__":
   vae = torch.load(r'modules\vq_vae_vae_{}_{}channels_{}latent_{}window_{}.pt'.format(effect, n_channels,latent_dims, L, i))
 
 
-  print(x)
-  print(params)
-  print(vae)
+  print(x.shape)
+  # print(params)
+  # print(vae)
   x = torch.FloatTensor(x)
 
   # L = v._L
@@ -945,7 +946,7 @@ if __name__ == "__main__":
   }
   effects = set_effect(effect, effects, 2)
   labels = extract_parameters(args, e_params=e_params, effects=effects)
-  labels = add_mu_std(labels, params)
+  # labels = add_mu_std(labels, params)
 
   train_data, val_data, test_data = create_loader_noWindow(x, args, labels, norm=True)
 

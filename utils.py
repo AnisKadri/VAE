@@ -26,7 +26,7 @@ import pprint
 from IPython import display
 import scipy.fft as sf
 from scipy.signal import find_peaks
-import umap
+# import umap
 import scipy.stats as st
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE

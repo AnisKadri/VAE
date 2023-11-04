@@ -23,10 +23,10 @@ def save(obj, name, effect, n_channels, latent_dims, L, i):
 # all parameters for generating the time series should be configured in this cell
 
 p = 2
-i = 1
-effect = "both"
-args = GENV(n_channels=2, latent_dims=4, n_samples=500, shuffle=False, periode=p, L=288 * p, min_max=False,
-            num_layers=3, robust=False, first_kernel=288, num_embed=1, modified=False)
+i = 2
+effect = "Seasonality"
+args = GENV(n_channels=1, latent_dims=5, n_samples=100, shuffle=False, periode=p, L=288 * p, min_max=True,
+            num_layers=3, robust=False, first_kernel=288, num_embed=512, modified=False)
 
 effects = {
     "Pulse": {
@@ -83,7 +83,7 @@ opt_vq = optim.Adam(vq.parameters(), lr = 0.002043529186448577) # 0.005043529186
 train_data, val_data, test_data, X = generate_labeled_data(args,
                                                            effects,
                                                            effect=effect,
-                                                           occurance=2,
+                                                           occurance=4,
                                                            return_gen=True,
                                                            anomalies=False)
 x, params, e_params = X.parameters()
@@ -92,7 +92,7 @@ np.set_printoptions(suppress=True)
 VAE_losses = []
 VQ_losses = []
 
-for epoch in range(1, 100):
+for epoch in range(1, 200):
     loss_vae = train(vae, train_data, args, opt_vae, epoch)
     loss_vq = train(vq, train_data, args, opt_vq, epoch)
 

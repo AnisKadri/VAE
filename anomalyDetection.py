@@ -149,7 +149,7 @@ class AD:
         true_merged = np.any(true_mask, axis=0)
         pred_merged = np.any(pred_mask, axis=0)
         y_scores_merged = np.max(y_scores, axis=0)    
-        print(model_label, true_merged.shape, pred_merged.shape, y_scores_merged.shape)
+#         print(model_label, true_merged.shape, pred_merged.shape, y_scores_merged.shape)
 
         fpr, tpr, thresholds = roc_curve(true_merged, y_scores_merged, drop_intermediate=False)
         roc_auc = auc(fpr, tpr)   
