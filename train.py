@@ -64,20 +64,42 @@ class NoWindow(Dataset):
 
 
 class SlidingWindow(Dataset):
-    def __init__(self, data, L, stride=0):
+    def __init__(self, data, args, stride=0):
         self.data = data
-        self.L = L
+        self.L = args.L
         self.stride = stride
+        
+        self.min_max = args.min_max
+        self.v_min, self.v_max = data.min(), data.max()
+        self.dist = self.v_max - self.v_min
+        print(data.shape)
 
     def __getitem__(self, index):
-        if self.data.shape[-1] - index >= self.L:
-            x = self.data[..., index:index + self.L]
-            norm = torch.sum(x, axis=(self.data.dim() - 1), keepdim=True) / self.L
-            x = x / norm
-            return x, "", norm
+        if self.data.shape[-1] - index >= self.L+1:
+            x_curr = self.data[..., index:index + self.L]
+            x_next = self.data[..., index+1:index + self.L+1]
+            
+            x_norm_curr = self.min_max_norm(x_curr)
+            x_std_curr, mean_curr, std_curr = self.standarization(x_curr)
+            
+            x_norm_next = self.min_max_norm(x_next)
+            x_std_next, mean_next, std_next = self.standarization(x_next)
+            
+            
+            return (x_norm_curr, x_norm_next, x_std_curr, x_std_next), "", (self.dist, self.v_min, std_curr, mean_curr, std_next, mean_next)
 
     def __len__(self):
         return self.data.shape[-1] - self.L
+    
+    def min_max_norm(self, data):
+        normed_val = (data - self.v_min) / self.dist        
+        return normed_val
+    
+    def standarization(self, data):
+        mean = data.mean(dim=1, keepdim=True)
+        std = data.std(dim=1, keepdim=True)
+        normed_val = (data - mean) / std        
+        return normed_val, mean, std 
 
 
 class StridedWindow(Dataset):

@@ -61,7 +61,7 @@ class Variational_Autoencoder(nn.Module):
         loss = 2 * ( main_term/(4 + main_term) )
         return loss.sum()
 
-    def forward(self, x, split_loss=False, ouput_indices=False):
+    def forward(self, x, x_next, split_loss=False, ouput_indices=False):
         mu, logvar = self.encoder(x)
         loss_kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
@@ -84,9 +84,9 @@ class Variational_Autoencoder(nn.Module):
         #         x_rec = self.reparametrization_trick(mu_dec, mu_dec)
         x_rec, mu_rec, logvar_rec = self.decoder(z)
         if self._robust:
-            loss_rec = self.criterion(x_rec, x)
+            loss_rec = self.criterion(x_rec, x_next)
         else:
-            loss_rec = F.mse_loss(x_rec, x, reduction='sum')
+            loss_rec = F.mse_loss(x_rec, x_next, reduction='sum')
         
         loss = loss_rec + self._ß * loss_kld
 
@@ -378,43 +378,43 @@ class VQ_MST_VAE(nn.Module):
 #         print(loss)
         return loss.mean()
 
-    def forward(self, x, split_loss=False, ouput_indices=False):
+    def forward(self, x, x_next, split_loss=False, ouput_indices=False):
         mu, logvar = self.encoder(x)
-
         z = self.reparametrization_trick(mu, logvar)
-#         print(x.shape)
-#         z = self.bn(self.quantizer._embedding.weight[None,:])
-#         is_larger = torch.all(torch.gt(z[0], self.quantizer._embedding.weight))
-#         print(z.shape)
-#         print("Is encoder output larger than the set of vectors?", is_larger)
-        e, loss_quantize, indices = self.quantizer(z)
-#         print(indices.shape)
 
-#         print("----------------Encoder Output-------------")
-#         print("mu and logvar", mu.shape, logvar.shape)
-#         print("----------------Reparametrization-------------")
-#         print("Z", z.shape)
-#         print("----------------Quantizer-------------")
-#         print("quantized shape", e.shape)
-#         print("loss shape", loss_quantize)
+        #         print(x.shape)
+        #         z = self.bn(self.quantizer._embedding.weight[None,:])
+        #         is_larger = torch.all(torch.gt(z[0], self.quantizer._embedding.weight))
+        #         print(z.shape)
+        #         print("Is encoder output larger than the set of vectors?", is_larger)
+        e, loss_quantize, indices = self.quantizer(z)
+        #         print(indices.shape)
+
+        #         print("----------------Encoder Output-------------")
+        #         print("mu and logvar", mu.shape, logvar.shape)
+        #         print("----------------Reparametrization-------------")
+        #         print("Z", z.shape)
+        #         print("----------------Quantizer-------------")
+        #         print("quantized shape", e.shape)
+        #         print("loss shape", loss_quantize)
 
         #         mu_dec, logvar_dec = self.decoder(e)
         #         x_rec = self.reparametrization_trick(mu_dec, mu_dec)
         x_rec, mu_rec, logvar_rec = self.decoder(e)
         if self._robust:
-            loss_rec = self.criterion(x_rec, x)
+            loss_rec = self.criterion(x_rec, x_next)
         else:
-            loss_rec = F.mse_loss(x_rec, x, reduction='sum')
+            loss_rec = F.mse_loss(x_rec, x_next, reduction='sum')
         loss = loss_rec + loss_quantize
 
-#         print("----------------Decoding-------------")
-#         print("----------------Decoder Output-------------")
-#         print("mu and logvar Decoder", mu_dec.shape, logvar_dec.shape)
-#         print("rec shape", x_rec.shape)
+        #         print("----------------Decoding-------------")
+        #         print("----------------Decoder Output-------------")
+        #         print("mu and logvar Decoder", mu_dec.shape, logvar_dec.shape)
+        #         print("rec shape", x_rec.shape)
         if split_loss == True:
             return x_rec, loss_rec, loss_quantize, mu, logvar, mu_rec, logvar_rec, e
         if ouput_indices == True:
             return x_rec, loss, mu, logvar, mu_rec, logvar_rec, e, indices        
         return x_rec, loss, mu, logvar, mu_rec, logvar_rec, e
 
-    # In[12]:
+        # In[12]:
