@@ -65,7 +65,7 @@ class Gen2():
             np.float16)  # mean values for each channel
         self.cov = np.ones(self.nchannels * self.n_samples).astype(np.float16)  # diag cov matrix for each channel
         if self.fast:
-            self.add_std_variation(effects["std_variation"])
+#             self.add_std_variation(effects["std_variation"])
             self.x = np.random.multivariate_normal(self.mu, np.diag(self.cov).astype(np.float16), size=self.n).T
         else:
             self.mu = np.tile(self.mu, (self.n, 1)).T.astype(np.float16)  # expand the means over the time axis
@@ -117,7 +117,7 @@ class Gen2():
                     self.add_trend(params)
                 elif effect == "Seasonality":
                     self.add_seasonality(params)
-                elif effect == "std_variation":
+                elif effect == "Std_variation":
                     self.add_std_variation(params)
                 elif effect == "channels_coupling":
                     self.add_channels_coupling(params)
@@ -138,7 +138,7 @@ class Gen2():
         ### create randomised Pulses parameters
         channels = np.random.randint(self.nchannels,
                                      size=n_occ) + transform  # On which channel will the effect be applied.
-        print(pulse_start)
+#         print(pulse_start)
         interval = self.check_interval_length(interval)  # Length of the generated Pulse
         start_idxs = self.set_start_idxs(pulse_start, occ, interval)  # At which index will the Pulse end.
         end_idxs = start_idxs + np.random.randint(low=1, high=interval,
@@ -150,11 +150,11 @@ class Gen2():
 
         # generate the pulses
         # original value at the pulse indexes
-        print(start_idxs.shape)
-        print(self.x.shape)
-        print(self.mu.shape)
-        print(self.x.shape)
-        print(channels.shape)
+#         print(start_idxs.shape)
+#         print(self.x.shape)
+#         print(self.mu.shape)
+#         print(self.x.shape)
+#         print(channels.shape)
         ground_val = self.x[channels, start_idxs].astype(np.int8) if self.fast else self.mu[channels, start_idxs].astype(np.int8)  
         
         amp_sign = 0.01 * np.sign(amp)
@@ -283,8 +283,12 @@ class Gen2():
 
 
     def add_std_variation(self, params):
+        # Merge samples and channels
+        if self.fast:
+            self.x = np.reshape(self.x, (self.n_samples * self.nchannels, -1))
 
         # extract parameters:
+#         occ, start_idxs, end_idxs = self.set_random_start()
         occ = params["occurances"]  # number of std variations.
         max_value = params["max_value"]  # max values of std.
         interval = params["interval"]  # length of the interval on which the std variates
@@ -298,21 +302,29 @@ class Gen2():
         channels = np.random.randint(self.nchannels,
                                      size=n_occ) + transform  # # On which channel will the seasonality be applied.
         interval = self.check_interval_length(interval)
-        start_idxs = self.set_start_idxs(start, occ, interval)  # At which index will the std variation start.
-        end_idxs = start_idxs + np.random.randint(interval, size=occ)  # At which index will the std variation end.
+        start_idxs = self.set_start_idxs(start, occ, interval=interval)  # At which index will the std variation start.
+        end_idxs = start_idxs + np.random.randint(5, interval, size=n_occ)  # At which index will the std variation end.
         amps = np.random.uniform(high=max_value, size=n_occ)
         intervals = end_idxs - start_idxs
+        
+        
 
         # save std variations parameters
         self.save_generated_effect("Std_variation", [channels - transform, start_idxs, end_idxs, amps])
 
         # add it to the channels
         for i in range(n_occ):
-            ch = channels[i]
-            # amplitude = np.random.uniform(high = max_value, size = (1, intervals[i]))
-
-            self.cov[ch, ch, start_idxs[i]: end_idxs[i]] = amps[i]
-            # self.effects_params["Std_variation"]["amplitude"].extend(amplitude)
+            ch, st, end, amp = channels[i], start_idxs[i], end_idxs[i], amps[i]
+            if self.fast:
+                scope = end - st
+                diag = np.ones(scope)*amp
+                added_std = np.random.multivariate_normal(np.zeros(scope), np.diag(diag).astype(np.float16)).T
+                self.x[channels[i], start_idxs[i]: end_idxs[i]] += added_std
+            else:
+                self.cov[ch, st: end] = amp
+        if self.fast:
+            self.x = np.reshape(self.x, (self.n_samples, self.nchannels, -1))
+            
 
     def add_channels_coupling(self, params):
 
@@ -494,17 +506,17 @@ class Gen2():
         
         
 
-    def check_interval_length(self, interval, treshold=1):
+    def check_interval_length(self, interval, treshold=4):
         if treshold == 0:
-            treshold = 1
+            treshold = 4
         if interval >= self.n // treshold:
             print("Adjusting the Interval")
             print("old one", interval)
             print("limit", self.n//treshold)
             interval = self.n // treshold
             print("new one", interval)
-        elif interval < 0:
-            interval = 0
+        elif interval < 5:
+            interval = 5
         return interval
 
     def merge(self, Y):

@@ -30,6 +30,7 @@ from scipy.signal import find_peaks
 import scipy.stats as st
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
+import umap
 
 
 
@@ -634,7 +635,7 @@ def generate_long_data(args, effects, periode_factor=182, effect="Seasonality", 
 #     train_data, val_data, test_data = create_loader_noWindow(x, labels, batch_size=batch_size, split=split, norm=norm)
 #     return train_data, val_data, test_data
 
-def generate_labeled_data(args, effects, effect="Seasonality", occurance=1, norm=True, return_gen=False, anomalies=False):
+def generate_labeled_data(args, effects, effect="Seasonality", occurance=1, norm=True, return_gen=False, anomalies=False, show=5):
     effects = set_effect(effect, effects, occurance)
     
     X = Gen2(args=args, effects=effects)
@@ -646,7 +647,7 @@ def generate_labeled_data(args, effects, effect="Seasonality", occurance=1, norm
         X.add_random_pulse(0.001)
 
     x, params, e_params = X.parameters()
-    X.show(10)
+    X.show(show)
 
     labels = extract_parameters(args, e_params=e_params, effects=effects)
 #     labels = add_mu_std(labels, params)
@@ -1541,7 +1542,7 @@ def no_effects(effects):
 def set_effect(effect, effects, n):
     
     occ = "occurances"
-    considered_effects = ["no_effect", "std_variation", "Pulse", "Trend", "Seasonality", "both", "all"]
+    considered_effects = ["no_effect", "Std_variation", "Pulse", "Trend", "Seasonality", "both", "all"]
     no_effects(effects)
     
     if effect == "random":
@@ -1561,6 +1562,7 @@ def set_effect(effect, effects, n):
         effects["Pulse"][occ] = n
         effects["Trend"][occ] = n
         effects["Seasonality"][occ] = n
+        effects["Std_variation"][occ] = n
         
     else:
         effects[effect][occ] = n

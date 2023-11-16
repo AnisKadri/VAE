@@ -61,7 +61,7 @@ class Variational_Autoencoder(nn.Module):
         loss = 2 * ( main_term/(4 + main_term) )
         return loss.sum()
 
-    def forward(self, x, x_next, split_loss=False, ouput_indices=False):
+    def forward(self, x, split_loss=False, ouput_indices=False):
         mu, logvar = self.encoder(x)
         loss_kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
@@ -84,9 +84,9 @@ class Variational_Autoencoder(nn.Module):
         #         x_rec = self.reparametrization_trick(mu_dec, mu_dec)
         x_rec, mu_rec, logvar_rec = self.decoder(z)
         if self._robust:
-            loss_rec = self.criterion(x_rec, x_next)
+            loss_rec = self.criterion(x_rec, x)
         else:
-            loss_rec = F.mse_loss(x_rec, x_next, reduction='sum')
+            loss_rec = F.mse_loss(x_rec, x, reduction='sum')
         
         loss = loss_rec + self._ß * loss_kld
 
@@ -378,7 +378,7 @@ class VQ_MST_VAE(nn.Module):
 #         print(loss)
         return loss.mean()
 
-    def forward(self, x, x_next, split_loss=False, ouput_indices=False):
+    def forward(self, x, split_loss=False, ouput_indices=False):
         mu, logvar = self.encoder(x)
         z = self.reparametrization_trick(mu, logvar)
 
@@ -402,9 +402,9 @@ class VQ_MST_VAE(nn.Module):
         #         x_rec = self.reparametrization_trick(mu_dec, mu_dec)
         x_rec, mu_rec, logvar_rec = self.decoder(e)
         if self._robust:
-            loss_rec = self.criterion(x_rec, x_next)
+            loss_rec = self.criterion(x_rec, x)
         else:
-            loss_rec = F.mse_loss(x_rec, x_next, reduction='sum')
+            loss_rec = F.mse_loss(x_rec, x, reduction='sum')
         loss = loss_rec + loss_quantize
 
         #         print("----------------Decoding-------------")

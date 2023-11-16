@@ -4,16 +4,16 @@ import matplotlib.pyplot as plt
 from train import *
 import pprint
 from IPython import display
-import umap
+
 import scipy.stats as st
 from torch.nn.functional import normalize
 from sklearn import linear_model
 from sklearn.ensemble import RandomForestRegressor
 from scipy.stats import entropy
 from IPython.display import display, Latex
-from utils import *
+from utils import * 
 TINY = 1e-12
-
+import umap
 # from hinton import *
 
 class identifier(nn.Module):
@@ -133,7 +133,7 @@ class DIS:
                  alpha=0.1,
                  n_estimators=10,
                  lr=0.01,
-                 epochs=500,
+                 epochs=200,
                  k=500):
 
         self.model = model
@@ -175,7 +175,7 @@ class DIS:
         self.Rs = self.get_Rs()
 
         # Visualize
-        show_results(self.model, self.data_loader, self.args, plot_latent=True)
+#         show_results(self.model, self.data_loader, self.args, plot_latent=True)
         self.codes, self.Ds, self.Cs = self.get_important_latents()
 
         for i, C in enumerate(Ds[0]):
@@ -314,17 +314,12 @@ class DIS:
         R = self.mlp.lin_layers[0].weight.detach().cpu().numpy().T
         return R
     def get_Rs(self):
-        R_mlp = self.get_R_from_mlp
+        R_mlp = self.get_R_from_mlp()
         R_lasso = self.get_R_from_lasso()
         R_forest = self.get_R_from_forest()
 
         return [R_mlp, R_lasso, R_forest]
-
-        R_mlp_vq = id_mlp_vq.lin_layers[0].weight.detach().cpu().numpy().T
-        R_lasso_vae = get_R_from_lasso(X_train_vae, y_train_vae)
-        R_lasso_vq = get_R_from_lasso(X_train_vq, y_train_vq)
-        R_forest_vae = get_R_from_forest(X_train_vae, y_train_vae).T
-        R_forest_vq = get_R_from_forest(X_train_vq, y_train_vq).T
+        
 
 
     def calc_P_matrix(self, R):
