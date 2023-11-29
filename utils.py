@@ -31,6 +31,8 @@ import scipy.stats as st
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import umap
+import os
+import dill
 
 
 
@@ -110,6 +112,67 @@ class GENV:
         if red:
             out = out // 2
         return out
+    
+def count_files_in_directory(directory_path, target_character):
+    try:
+        # Filter files based on the target character
+        matching_files = [file for file in os.listdir(directory_path) if target_character in file]
+        print(len(matching_files))
+
+        return len(matching_files)
+
+    except FileNotFoundError:
+        print(f'The specified directory "{directory_path}" does not exist.')
+        
+def save(file_name, obj, obj_type):
+    path = f'modules/{file_name}_{obj_type}.pth'
+    torch.save(obj, path, pickle_module=dill)
+
+def save_all(vae, vq, X, args, train_loader, val_loader, test_loader, labels=None, train_labels=None, num= None, name=None):
+    if num==None:
+        num = count_files_in_directory("modules", "vae")
+    if name==None:    
+        file_name= f"cp_{num}"
+    else: file_name = name
+            
+    save(file_name, vae, "vae")
+    save(file_name, vq, "vq")
+    save(file_name, X, "X")
+    save(file_name, args, "config")
+    save(file_name, train_loader, "train_loader")
+    save(file_name, val_loader, "val_loader")
+    save(file_name, test_loader, "test_loader")
+    
+    save(file_name, labels, "labels")
+    save(file_name, train_labels, "train_labels")
+    
+def load(obj_type, num=0):
+    dir_path = "modules"
+    path = f'modules/cp_{num}_{obj_type}.pth'
+    try:
+        cp = torch.load(path, pickle_module=dill)            
+        return cp
+
+    except FileNotFoundError:
+        print(f'The specified file "{path}" does not exist.')
+        
+def load_all(num=0):
+    vae  = load("vae", num)
+    vq   = load("vq", num)
+    X = load("X", num)
+    args = load("config", num)
+    train_loader = load("train_loader", num)
+    val_loader = load("val_loader", num)
+    test_loader = load("test_loader", num)
+    labels = load("labels", num)
+    train_labels = load("train_labels", num)
+    
+    if labels == None:   
+        print("long")
+    else:
+        print("label")
+    
+    return vae, vq, X, args, labels, train_loader, val_loader, test_loader, train_labels
 
 
 def get_statistics_global(data):
@@ -1023,10 +1086,10 @@ def experiment(data, model, latent_dims):
         # plt.grid(True)
 
 
-    def save(text):
+#     def save(text):
 
-        print(text)
-        torch.save(model, r'modules\{}.pt'.format(text))
+#         print(text)
+#         torch.save(model, r'modules\{}.pt'.format(text))
 
     text_ax = plt.axes([0.5, 0.01, 0.35, 0.05])
     text_box = TextBox(text_ax,'Save as: ', initial="beta_vae3")
@@ -1636,9 +1699,9 @@ def train_on_effect_and_parameters(model, id_model, opt, id_opt, device, n_chann
 #         save(model, "model", effect, n_channels, latent_dims, L, i)
     return model, X, train_data
 
-def save(obj, name, effect, args, i):
-    torch.save(obj, r'modules\vq_vae_{}_{}_{}channels_{}latent_{}window_{}.pt'.format(name, effect, args.n_channels,
-                                                                                      args.latent_dims, args.L, i))
+# def save(obj, name, effect, args, i):
+#     torch.save(obj, r'modules\vq_vae_{}_{}_{}channels_{}latent_{}window_{}.pt'.format(name, effect, args.n_channels,
+#                                                                                       args.latent_dims, args.L, i))
 
 
 def get_average_norm_scale(train_data, model):
