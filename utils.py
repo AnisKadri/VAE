@@ -65,8 +65,12 @@ class GENV:
                  modified=True,
                  reduction=True,
                  robust=False,
-                 an_percentage=0.05,
+                 an_percentage=0.15,
                  an_max_amp=10,
+                 exp_factor=4,
+                 lin_layers=4,
+                 n_heads=8,
+                 trs_layers=2,
                  min_max=True
                 ):
         
@@ -100,6 +104,10 @@ class GENV:
         self.robust = robust                       # If True Geman-McClure loss with lambda = 0.1 will be used (from RESIST paper)
         self.an_percentage = an_percentage         # Percentage of random Pulse anomalies, between 0 and 1
         self.an_max_amp = an_max_amp               # Max amplitude Pulse anomalies can take
+        self.exp_factor = exp_factor               # Expansio actor in the Feed Forward block of transformer
+        self.lin_layers = lin_layers               # Number of lin layer in MLP encoder/decoder
+        self.n_heads = n_heads                     # Number of heads in attention layer
+        self.trs_layers = trs_layers               # Number of transformer layers
         self.enc_out = self.enc_output(            # number of channels at enc output
             self.modified,   
             self.reduction)
@@ -408,12 +416,13 @@ def rebuild_TS(model, train_loader, args, keep_norm= False):
     min_max = args.min_max
     model.to(device)
     model.eval()
+    single_head = int(args.latent_dims/args.n_heads)
     
     for p in model.parameters():
         p.requires_grad = False
 
     data_shape = train_loader.dataset.data.shape 
-    e_indices = torch.empty(data_shape[0], args.enc_out, args.latent_dims) 
+    e_indices = torch.empty(data_shape[0], args.n_channels, single_head)  # torch.empty(data_shape[0], args.enc_out, args.latent_dims) 
     Origin = torch.empty(data_shape)
     REC = torch.empty(data_shape)
 
@@ -429,8 +438,9 @@ def rebuild_TS(model, train_loader, args, keep_norm= False):
         
         denorm_data = revert_min_max_s(data, norm) if min_max else revert_standarization(data, norm)
         denorm_rec =  revert_min_max_s(x_rec, norm) if min_max else revert_standarization(x_rec, norm)
+        print(e.shape)
         
-        e_indices[idx: (idx+bs)] = e.view(bs, args.enc_out, -1)
+        e_indices[idx: (idx+bs)] = e.view(bs, args.n_heads, -1) # e.view(bs, args.enc_out, -1)
         Origin[idx: idx+bs] = denorm_data
         REC[idx: idx+bs] = denorm_rec
         idx += bs
@@ -465,6 +475,7 @@ def rebuild_TS_non_overlapping(model, train_loader, args, keep_norm= False):
         bs   = data.shape[0]
         
         x_rec, loss, mu, logvar, mu_rec, logvar_rec, e, indices = model(data, ouput_indices=True)
+        print(indices.shape)
         
         denorm_data = revert_min_max(data, norm) if min_max else revert_standarization(data, norm)
         denorm_rec =  revert_min_max(x_rec, norm) if min_max else revert_standarization(x_rec, norm)
@@ -472,6 +483,7 @@ def rebuild_TS_non_overlapping(model, train_loader, args, keep_norm= False):
         Origin    = torch.cat(( Origin, denorm_data.permute(1,0,2).reshape(args.n_channels, -1) ), axis=1)
         REC       = torch.cat(( REC, denorm_rec.permute(1,0,2).reshape(args.n_channels, -1)   ), axis=1)
         e_indices = torch.cat(( e_indices, indices.view(args.enc_out, -1)     ), axis=1)
+        print(e_indices.shape)
         idx += bs
 
     return Origin.T, REC.T, e_indices
@@ -510,6 +522,7 @@ def show_results_long(model, data, args, vq=False, xlim=800):
     
     plot_rec(Origin_norm[:xlim].cpu(), REC_norm[:xlim].cpu(), title=title+" (normalized)")
     plot_rec(Origin[:xlim].cpu(), REC[:xlim].cpu(), title=title)
+    create_heatmap(indices.cpu(), x_label="Z", title="Latent Variables")
     
     if vq:
         codebook = model.quantizer._embedding.weight

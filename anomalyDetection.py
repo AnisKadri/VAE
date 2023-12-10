@@ -246,7 +246,7 @@ class AD:
         plt.show()
         
     def plot_y_scores(self,rec_loss, y_scores):
-        scale_factor = 1#/torch.max(rec_loss, axis=0)[0]
+        scale_factor = 1/torch.max(rec_loss, axis=0)[0]
         rec_loss_rescaled = scale_factor * rec_loss
         
          # Plotting the scores

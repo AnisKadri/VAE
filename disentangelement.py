@@ -175,13 +175,13 @@ class DIS:
         self.Rs = self.get_Rs()
 
         # Visualize
-#         show_results(self.model, self.data_loader, self.args, plot_latent=True)
+        show_results(self.model, self.data_loader, self.args, plot_latent=True)
         self.codes, self.Ds, self.Cs = self.get_important_latents()
 
-        for i, C in enumerate(Ds[0]):
-            display(Latex(f'$C_{i + 1}: {C:.3f}$'))
-        for i, D in enumerate(Cs[0]):
-            display(Latex(f'$D_{i + 1}: {D:.3f}$'))
+#         for i, C in enumerate(self.Ds[0]):
+#             display(Latex(f'$C_{i + 1}: {C:.3f}$'))
+#         for i, D in enumerate(self.Cs[0]):
+#             display(Latex(f'$D_{i + 1}: {D:.3f}$'))
 
 
 
@@ -308,7 +308,7 @@ class DIS:
             feature_importances = rf_model.feature_importances_
             R.append(feature_importances)
 
-        return np.array(R)
+        return np.array(R).T
 
     def get_R_from_mlp(self):
         R = self.mlp.lin_layers[0].weight.detach().cpu().numpy().T
