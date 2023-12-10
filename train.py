@@ -181,7 +181,7 @@ def create_loader_Window(x, args):
     train_ = x[..., :int(train_split * n)]
     val_ = x[..., int(train_split * n):int(test_split * n)]
     test_ = x[..., int(test_split * n):]
-    print(test_.shape)
+    print(train_.shape)
 
     train_data = DataLoader(window(train_, args),  # slidingWindow, stridedWindow
                             batch_size=batch_size,  # 59, # 22
