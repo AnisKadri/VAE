@@ -224,10 +224,10 @@ def get_statistics_window(model, train_data, args, Origin=True):
 
 def get_stats_loss(model, train_data, args, long=True):
     if long:
-        Origin, REC, _ = rebuild_TS_non_overlapping(model, train_data, args, keep_norm=False)
+        Origin, REC, _= rebuild_TS_non_overlapping(model, train_data, args, keep_norm=False)
         Origin, REC = Origin.T, REC.T
     else:
-        Origin, REC, _ = rebuild_TS(model, train_data, args, keep_norm=False)
+        Origin, REC, _, _ = rebuild_TS(model, train_data, args, keep_norm=False)
 
     names_global, stats_global = get_statistics_global(Origin.cpu())
     names_window, stats_window = get_statistics_window(model, train_data, args)
@@ -411,7 +411,7 @@ def mute_norm(norm):
 
 
 
-def rebuild_TS(model, train_loader, args, keep_norm= False):    
+def rebuild_TS(model, train_loader, args, keep_norm= False, attention=True):    
     device = args.device    
     min_max = args.min_max
     model.to(device)
@@ -422,9 +422,10 @@ def rebuild_TS(model, train_loader, args, keep_norm= False):
         p.requires_grad = False
 
     data_shape = train_loader.dataset.data.shape 
-    e_indices = torch.empty(data_shape[0], args.n_channels, single_head)  # torch.empty(data_shape[0], args.enc_out, args.latent_dims) 
+    e_indices = torch.empty(data_shape[0], args.enc_out, args.latent_dims) #torch.empty(data_shape[0], args.n_channels, single_head)  # torch.empty(data_shape[0], args.enc_out, args.latent_dims) 
     Origin = torch.empty(data_shape)
     REC = torch.empty(data_shape)
+    Att = torch.empty(data_shape[0], args.n_heads, args.n_channels, args.n_channels)
 
     idx = 0
     for sample_idx, (data_tup, label, norm) in enumerate(train_loader):
@@ -434,18 +435,21 @@ def rebuild_TS(model, train_loader, args, keep_norm= False):
         data = pick_data(data_tup, args)
         norm = [n.to(device) for n in norm]
         bs   = data.shape[0]  
-        x_rec, loss, mu, logvar, mu_rec, logvar_rec, e, indices = model(data, ouput_indices=True)
+        x_rec, loss, mu, logvar, mu_rec, logvar_rec, e, att = model(data, ouput_indices=True)
         
         denorm_data = revert_min_max_s(data, norm) if min_max else revert_standarization(data, norm)
         denorm_rec =  revert_min_max_s(x_rec, norm) if min_max else revert_standarization(x_rec, norm)
-        print(e.shape)
-        
-        e_indices[idx: (idx+bs)] = e.view(bs, args.n_heads, -1) # e.view(bs, args.enc_out, -1)
+#         print(att.shape)
+#         print(e.view(bs, args.enc_out, -1).shape)
+#         print(e_indices[idx: (idx+bs)].shape)
+        e_indices[idx: (idx+bs)] = e.view(bs, args.enc_out, -1)# e.view(bs, args.n_heads, -1) # e.view(bs, args.enc_out, -1)
         Origin[idx: idx+bs] = denorm_data
         REC[idx: idx+bs] = denorm_rec
+        if attention:
+            Att[idx: idx+bs] = att
         idx += bs
         
-    return Origin, REC, e_indices
+    return Origin, REC, e_indices, Att
 
 # @suppress_prints
 def rebuild_TS_non_overlapping(model, train_loader, args, keep_norm= False):
@@ -461,6 +465,7 @@ def rebuild_TS_non_overlapping(model, train_loader, args, keep_norm= False):
         p.requires_grad = False
         
     e_indices = torch.empty(args.enc_out, 0).to(device)
+#     att_scores = torch.empty(args.enc_out, args.latent_dims).to(device)
 
     Origin = torch.empty(n_channels, 0).to(device)
     REC = torch.empty(n_channels, 0).to(device)
@@ -474,19 +479,20 @@ def rebuild_TS_non_overlapping(model, train_loader, args, keep_norm= False):
         norm = [n.to(device) for n in norm]
         bs   = data.shape[0]
         
-        x_rec, loss, mu, logvar, mu_rec, logvar_rec, e, indices = model(data, ouput_indices=True)
-        print(indices.shape)
+        x_rec, loss, mu, logvar, mu_rec, logvar_rec, e, att = model(data, ouput_indices=True)
+        print("att", att[-1].shape)
         
         denorm_data = revert_min_max(data, norm) if min_max else revert_standarization(data, norm)
         denorm_rec =  revert_min_max(x_rec, norm) if min_max else revert_standarization(x_rec, norm)
         
         Origin    = torch.cat(( Origin, denorm_data.permute(1,0,2).reshape(args.n_channels, -1) ), axis=1)
         REC       = torch.cat(( REC, denorm_rec.permute(1,0,2).reshape(args.n_channels, -1)   ), axis=1)
-        e_indices = torch.cat(( e_indices, indices.view(args.enc_out, -1)     ), axis=1)
-        print(e_indices.shape)
+#         e_indices = torch.cat(( e_indices, indices.view(args.enc_out, -1)     ), axis=1)
+#         att_scores = att
+#         print(e_indices.shape)
         idx += bs
 
-    return Origin.T, REC.T, e_indices
+    return Origin.T, REC.T, att[-1].view(args.n_channels, -1) #e_indices
 
 def step_by_step_plot(model, data_loader, args, x_lim=None):
      
@@ -534,8 +540,8 @@ def show_results(model, data, args, vq=False, sample=1, plot_latent=True):
     model_type = "VQ" if vq else "VAE" 
     sample= args.samples_factor * args.n_samples if sample > args.samples_factor * args.n_samples else sample
     title = model_type +": Original data vs Reconstruction"
-    Origin_norm, REC_norm, _ = rebuild_TS(model, data, args, keep_norm=True)
-    Origin, REC, latents = rebuild_TS(model, data, args)
+    Origin_norm, REC_norm, _, _ = rebuild_TS(model, data, args, keep_norm=True)
+    Origin, REC, latents, att = rebuild_TS(model, data, args)
     
     plot_rec(Origin_norm[sample].T.cpu(), REC_norm[sample].T.cpu(), title=title+" (normalized)")
     plot_rec(Origin[sample].T.cpu(), REC[sample].T.cpu(), title=title)
@@ -543,6 +549,7 @@ def show_results(model, data, args, vq=False, sample=1, plot_latent=True):
     if plot_latent:
         plot_latent_per_channel(latents.cpu(), args)
         plot_latent_per_dim(latents.cpu(), args)
+        plot_att_per_head(att.cpu(), args)
 #     plot_indices(latents[sample].cpu())
     
     if vq:
@@ -620,10 +627,12 @@ def plot_latent_per_channel(latent, args, title="2 dim per each channel"):
     ax[2].grid(True)
     plt.show()
     
+    
 def plot_latent_per_dim(latent, args, title="2 dim per latent dimension"):
     umap_result = []
     pca_results = []
     tsne_results = []
+    print(latent.shape)
     for i in range(args.latent_dims):
         latent_grp = latent[...,i]
         
@@ -660,6 +669,54 @@ def plot_latent_per_dim(latent, args, title="2 dim per latent dimension"):
     ax[1].grid(True)
     ax[2].grid(True)
     plt.show()
+    
+    
+    
+def plot_att_per_head(att, args, title="2 dim per attention head"):
+    umap_result = []
+    pca_results = []
+    tsne_results = []
+    bs = att.shape[0]
+    for i in range(args.n_heads):
+        head = att.view(bs, args.n_heads, -1).permute(1,0,2)[i]
+        
+        pca = PCA(n_components=2, random_state=0)
+        reducer = umap.UMAP(n_components=2, random_state=0)
+        tsne = TSNE(n_components=2, random_state=0)
+        
+        pca_embed = pca.fit_transform(head)
+        tsne_embed =  tsne.fit_transform(head)
+        embedding = reducer.fit_transform(head)
+        
+        pca_results.append(pca_embed)
+        tsne_results.append(tsne_embed)
+        umap_result.append(embedding)
+     
+    fig, ax = plt.subplots(nrows=1, ncols=3,figsize=(12, 4), dpi=100)
+    
+    for i, embed in enumerate(pca_results):
+        ax[0].scatter(embed[:,0], embed[:,1], label= "Z {}".format(i))
+    for i, embed in enumerate(tsne_results):
+        ax[1].scatter(embed[:,0], embed[:,1], label= "Z {}".format(i))
+    
+    for i, embed in enumerate(umap_result):
+        ax[2].scatter(embed[:,0], embed[:,1], label= "Z {}".format(i))
+        
+        
+    ax[0].set_title(title+ " (PCA)")
+    ax[1].set_title(title+ " (t-SNE)")
+    ax[2].set_title(title+ " (UMAP)")
+    ax[0].legend(loc="upper right")
+    ax[1].legend(loc="upper right")
+    ax[2].legend(loc="upper right")
+    
+    ax[0].grid(True)
+    ax[1].grid(True)
+    ax[2].grid(True)
+    plt.show()
+    
+    heads = att.mean(axis = (0,1))
+    heatmap = create_heatmap(heads.cpu().detach().numpy() )
     
 def plot_indices(indices):
     fig, ax = plt.subplots(figsize=(10, 5))

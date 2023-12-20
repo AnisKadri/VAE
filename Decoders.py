@@ -51,6 +51,7 @@ class TCVAE_Decoder(nn.Module):
             self.first_kernel = self.first_kernel
         
         input_lin = self.latent_dims * 2 ** (self.num_layers ) + self.first_kernel - 2
+        n = self.latent_dims
 
         if self.modified:
             self.cnn_input = self.decoder_input * self.num_layers * 2
@@ -84,31 +85,39 @@ class TCVAE_Decoder(nn.Module):
                     self.cnn_layers.append(nn.BatchNorm1d(self.cnn_input // (2 * (i + 1))))
         else:
             self.cnn_input = self.n_channels
+            
             for i in range(0, self.num_layers):
                 if i == 0:
                     if first_kernel == None: first_kernel = 2
+                    n = n * 2
                     if self.reduction:
                         self.cnn_layers.append(
                             nn.ConvTranspose1d(self.cnn_input, self.cnn_input, kernel_size=2, stride=2, padding=0))
                         self.cnn_layers.append(nn.LeakyReLU(self.slope, True))
-                        self.cnn_layers.append(nn.BatchNorm1d(self.cnn_input))
+#                         self.cnn_layers.append(nn.BatchNorm1d(self.cnn_input))
+                        self.cnn_layers.append(nn.LayerNorm(n))
                     else:
                         self.cnn_layers.append(
                             nn.ConvTranspose1d(self.cnn_input * 2, self.cnn_input, kernel_size=2, stride=2, padding=0))
                         self.cnn_layers.append(nn.LeakyReLU(self.slope, True))
-                        self.cnn_layers.append(nn.BatchNorm1d(self.cnn_input))
+#                         self.cnn_layers.append(nn.BatchNorm1d(self.cnn_input))
+                        self.cnn_layers.append(nn.LayerNorm(n))
                 elif i == self.num_layers - 1:
+                    n = (n-1) * 2 + first_kernel
                     if first_kernel == None: first_kernel = 2
                     self.cnn_layers.append(
                         nn.ConvTranspose1d(self.cnn_input, self.cnn_input, kernel_size=first_kernel, stride=2,
                                            padding=0))
                     self.cnn_layers.append(nn.LeakyReLU(self.slope, True))
-                    self.cnn_layers.append(nn.BatchNorm1d(self.cnn_input))
+#                     self.cnn_layers.append(nn.BatchNorm1d(self.cnn_input))
+                    self.cnn_layers.append(nn.LayerNorm(n))
                 else:
+                    n = n * 2
                     self.cnn_layers.append(
                         nn.ConvTranspose1d(self.cnn_input, self.cnn_input, kernel_size=2, stride=2, padding=0))
                     self.cnn_layers.append(nn.LeakyReLU(self.slope, True))
-                    self.cnn_layers.append(nn.BatchNorm1d(self.cnn_input))
+#                     self.cnn_layers.append(nn.BatchNorm1d(self.cnn_input))
+                    self.cnn_layers.append(nn.LayerNorm(n))
 
         self.decoder_lin = nn.Linear(input_lin, self.L)
         # MLP Layers for Mu and logvar output

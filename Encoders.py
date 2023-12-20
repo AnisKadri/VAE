@@ -42,11 +42,13 @@ class TCVAE_Encoder(nn.Module):
                 if first_kernel == None: first_kernel = 2
                 self.cnn_layers.append(nn.Conv1d(self.n_channels, self.n_channels * 2, kernel_size=first_kernel, stride=2, padding=0))
                 self.cnn_layers.append(nn.LeakyReLU(self.slope, True))
-                self.cnn_layers.append(nn.BatchNorm1d(self.n_channels * 2))
+#                 self.cnn_layers.append(nn.BatchNorm1d(self.n_channels * 2))
+                self.cnn_layers.append(nn.LayerNorm(self.n_channels * 2))
             else:                
                 self.cnn_layers.append(nn.Conv1d(self.n_channels * 2 * i, self.n_channels * 2 * (i+1), kernel_size=2, stride=2, padding=0))
                 self.cnn_layers.append(nn.LeakyReLU(self.slope, True))
-                self.cnn_layers.append(nn.BatchNorm1d(self.n_channels * 2 * (i+1)))
+#                 self.cnn_layers.append(nn.BatchNorm1d(self.n_channels * 2 * (i+1)))
+                self.cnn_layers.append(nn.LayerNorm(self.n_channels * 2 * (i+1)))
                 
         # MLP Layers for Mu and logvar output
         self.encoder_mu = nn.Sequential(
@@ -105,20 +107,26 @@ class TCVAE_Encoder_unified(nn.Module):
             if isinstance(m, nn.Conv1d):
                 torch.nn.init.kaiming_uniform_(m.weight, mode="fan_in", nonlinearity="leaky_relu")
                 m.bias.data.fill_(0.01)
-
+        n = args.L
         # CNN Layers that double the channels each time
         for i in range(0, self.num_layers):
             if i == 0:
                 if first_kernel == None: first_kernel = 2
+                n = 1 + ((n - first_kernel) // 2)
+#                 print(n)
                 self.cnn_layers.append(
                     nn.Conv1d(self.n_channels, self.n_channels * 2, kernel_size=first_kernel, stride=2, padding=0))
                 self.cnn_layers.append(nn.LeakyReLU(self.slope, True))
-                self.cnn_layers.append(nn.BatchNorm1d(self.n_channels * 2))
+#                 self.cnn_layers.append(nn.BatchNorm1d(self.n_channels * 2))
+                self.cnn_layers.append(nn.LayerNorm(n))
             else:
+                n = 1 + ((n - 2) // 2)
+#                 print(n)
                 self.cnn_layers.append(
                     nn.Conv1d(self.n_channels * 2 * i, self.n_channels * 2 * (i + 1), kernel_size=2, stride=2, padding=0))
                 self.cnn_layers.append(nn.LeakyReLU(self.slope, True))
-                self.cnn_layers.append(nn.BatchNorm1d(self.n_channels * 2 * (i + 1)))
+#                 self.cnn_layers.append(nn.BatchNorm1d(self.n_channels * 2 * (i + 1)))
+                self.cnn_layers.append(nn.LayerNorm(n))
 
         # MLP Layers for Mu and logvar output
         self.encoder_mu = nn.Sequential(
@@ -137,21 +145,21 @@ class TCVAE_Encoder_unified(nn.Module):
     def forward(self, x):
         ### CNN
         for i, cnn in enumerate(self.cnn_layers):
-#             print("Encoder Cnn", x.shape)
+            print("Encoder Cnn", x.shape)
             x = cnn(x)
         cnn_shape = x.shape
-#         print("Encoder after Cnn ", x.shape)
+        print("Encoder after Cnn ", x.shape)
         if not self.modified:
             x = x.view(x.size(0), -1)
-#             print("Encoder reshape after Cnn ", x.shape)
+            print("Encoder reshape after Cnn ", x.shape)
         # ### MLP
         mu = self.encoder_mu(x)
         logvar = self.encoder_logvar(x)
-#         print("Encoder mu after lin ", mu.shape)
+        print("Encoder mu after lin ", mu.shape)
         if not self.modified:
             mu = mu.view(mu.shape[0], self.n_channels, -1)
             logvar = logvar.view(logvar.shape[0], self.n_channels, -1)
-#             print("Encoder mu after reshape ", mu.shape)
+            print("Encoder mu after reshape ", mu.shape)
         # mu.reshape
 
         return mu, logvar
@@ -172,15 +180,15 @@ class LongShort_TCVAE_Encoder(nn.Module):
         self.reduction_layer = nn.Conv1d(self.red_input, self.red_input // 2, kernel_size=1, stride=1, padding=0)
 
     def forward(self, x):
-#         print("Input encoder", x.shape)
+        print("Input encoder", x.shape)
         short_mu, short_logvar = self.short_encoder(x)
         long_mu, long_logvar = self.long_encoder(x)
 
         mu = torch.cat((short_mu, long_mu), axis=1)
         logvar = torch.cat((short_logvar, long_logvar), axis=1)
 
-#         print("Short Encoder mu: ", short_mu.shape)
-#         print("Long Encoder mu: ", long_mu.shape)
+        print("Short Encoder mu: ", short_mu.shape)
+        print("Long Encoder mu: ", long_mu.shape)
         
 #         print("After Cat: ", mu.shape)
         if self._reduction:

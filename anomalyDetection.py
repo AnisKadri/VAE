@@ -149,7 +149,7 @@ class AD:
         true_merged = np.any(true_mask, axis=0)
         pred_merged = np.any(pred_mask, axis=0)
         y_scores_merged = np.max(y_scores, axis=0)    
-#         print(model_label, true_merged.shape, pred_merged.shape, y_scores_merged.shape)
+        print(model_label, true_merged.shape, pred_merged.shape, y_scores_merged.shape)
 
         fpr, tpr, thresholds = roc_curve(true_merged, y_scores_merged, drop_intermediate=False)
         roc_auc = auc(fpr, tpr)   
@@ -409,7 +409,7 @@ class AD:
     
     def get_pred_mask(self, model, data, args, norm=True):
         
-        Origin, REC, _ = rebuild_TS_non_overlapping(model, data, args, keep_norm=norm)
+        Origin, REC, _ = rebuild_TS_non_overlapping(model, data, args, keep_norm=self.norm)
         self.Origin, self.REC = Origin.cpu(), REC.cpu()
         
         rec_loss = self.get_rec_loss()
